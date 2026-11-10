@@ -49,17 +49,22 @@
 <script>
 (() => {
   // ---------- settings ----------
-  const G = 96;              // pixel-game grid (cells across the square)
-  const HR = 480;            // line drawing resolution before snapping to the grid (5 px per cell)
-  const M = 64;              // analysis grid for the person mask and the background
+  let G = 96;                // pixel-game grid (cells across the square): 96, finer for groups and logos
+  let HR = 480;              // line drawing resolution before snapping to the grid (5 px per cell)
+  const M = 64, MM = 64;              // analysis grid for the person mask and the background
   const BOIL_FPS = 10;       // the finished doodle is redrawn this many times a second, each time a little different
   const BG_LEVELS = 2;       // how many light/dark boundaries of the scene become lines
   const MAX_BG_LINES = 12;   // keep only the longest background lines: a 5-year-old draws the big things
   const COUNT_FROM = 3;      // seconds of countdown before the snapshot
   const GIF_FRAMES = 10;     // frames in the downloaded GIF (one boil cycle each)
   const GREEN = [92, 255, 122], BG = [10, 20, 15], FLASH = [226, 255, 232], MID = [44, 150, 74];   // MID: the pixel frame
+  const MIRROR_RESULT = false;   // false: the drawing reads like a real photo, so logos and text are the right way round (the live view stays mirrored)
   const CLOSED_EYE = 0.21;   // eyelid gap / eye width below this = eye closed
-  const YOLO_URL = 'models/yolov8s-oiv7-fp16.onnx', ORT_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/', HEADPHONES = 244;
+  const YOLO_URL = 'models/yolov8m-oiv7-fp16.onnx', ORT_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+  // Open Images classes the doodle knows how to draw
+  const KINDS = {7:'animal',17:'cake',28:'bird',33:'animal',49:'bird',69:'animal',78:'cake',82:'camera',84:'bird',96:'cat',99:'animal',108:'bird',152:'animal',154:'cake',160:'dog',162:'doll',163:'fish',174:'bird',176:'bird',179:'animal',184:'bird',192:'fish',206:'animal',215:'animal',221:'fish',225:'bird',235:'animal',239:'animal',244:'headphones',255:'animal',282:'cat',313:'cat',320:'bird',321:'animal',327:'animal',340:'animal',343:'animal',344:'cake',358:'bird',359:'animal',361:'bird',371:'bird',379:'bird',387:'animal',398:'animal',411:'animal',412:'animal',443:'animal',446:'fish',451:'fish',452:'animal',479:'bird',488:'animal',508:'bird',525:'doll',534:'cat',547:'doll',581:'fish',596:'bird',599:'animal'};
+  const PARSE_URL = 'models/faceparse-fp16.onnx', FACE_CLS = 264, PN = 128;   // face parsing: 19 parts, read on a 128 grid
+  const CANDLE = 85, MIN_SCORE = { doll: 0.15 }, ANIMALS = ['bird', 'dog', 'cat', 'fish', 'animal'];
 
   const stage = document.getElementById('stage');
   const ctx = stage.getContext('2d');
@@ -68,7 +73,7 @@
   const work = document.createElement('canvas'); work.width = work.height = HR;
   const wctx = work.getContext('2d', { willReadFrequently: true });
   const cellsCv = document.createElement('canvas'); cellsCv.width = cellsCv.height = G;
-  const cctx = cellsCv.getContext('2d'); const cellImg = cctx.createImageData(G, G);
+  const cctx = cellsCv.getContext('2d'); let cellImg = cctx.createImageData(G, G);
   const camS = document.createElement('canvas'); camS.width = camS.height = M;
   const camCtx = camS.getContext('2d', { willReadFrequently: true });
   const viewS = document.createElement('canvas'); viewS.width = viewS.height = G;
@@ -77,12 +82,14 @@
   const mctx = maskCv.getContext('2d', { willReadFrequently: true });
   const still = document.createElement('canvas'); still.width = still.height = 640;     // the frozen moment, square
   const stillCtx = still.getContext('2d', { willReadFrequently: true });
+  const stillM = document.createElement('canvas'); stillM.width = stillM.height = 640;   // the frozen moment as you see it (mirrored for selfies)
+  const stillMCtx = stillM.getContext('2d', { willReadFrequently: true });
   const scan = document.createElement('canvas');
 
   let stream = null, facing = 'user', mode = 'idle', modeT = 0, lastBoil = 0, boilSeed = 1, labelDate = '', place = '';
   const labelText = () => (labelDate + ' ' + place).trim();
   const person = new Float32Array(M * M), bgLum = new Float32Array(M * M).fill(-1);
-  let segReady = false, face = null, hands = [], phones = [], strokesCache = [], hol = null, holReady = null, lastResult = null;
+  let segReady = false, face = null, people = [], hands = [], phones = [], objects = [], mainParse = null, extraFaces = [], logoLines = [], strokesCache = [], hol = null, holReady = null, lastResult = null;
 
   // ---------- layout: a centred square ----------
   function resize() {
@@ -109,7 +116,7 @@
   function stopCam() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
 
   // ---------- the model runs once, on the frozen frame only ----------
-  const U = p => [facing === 'user' ? 1 - p.x : p.x, p.y];
+  const U = p => [MIRROR_RESULT ? 1 - p.x : p.x, p.y];
   function initModel() {
     try {
       if (!window.Holistic) return;
@@ -123,7 +130,7 @@
   }
   initModel();
   // headphones: an Open Images detector, downloaded once in the background after the person model
-  let yolo = null, yoloReady = null;
+  let yolo = null, yoloReady = null, parser = null, parseReady = null;
   function loadScript(src) { return new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = src; sc.crossOrigin = 'anonymous'; sc.onload = ok; sc.onerror = no; document.head.appendChild(sc); }); }
   function initYolo() {
     if (yoloReady) return;
@@ -132,33 +139,186 @@
       ort.env.wasm.wasmPaths = ORT_URL; ort.env.wasm.numThreads = 1;
       yolo = await ort.InferenceSession.create(YOLO_URL, { executionProviders: ['wasm'] });
     })().catch(() => { yolo = null; });
+    parseReady = yoloReady.then(async () => { if (window.ort) parser = await ort.InferenceSession.create(PARSE_URL, { executionProviders: ['wasm'] }); }).catch(() => { parser = null; });
   }
-  async function detectHeadphones() {
+  async function detectObjects() {
     const S = 640, yc = document.createElement('canvas'); yc.width = yc.height = S;
     const yx = yc.getContext('2d', { willReadFrequently: true }); yx.drawImage(still, 0, 0, S, S);
     const d = yx.getImageData(0, 0, S, S).data, inp = new Float32Array(3 * S * S), A = S * S;
     for (let i = 0, p = 0; i < A; i++, p += 4) { inp[i] = d[p] / 255; inp[A + i] = d[p + 1] / 255; inp[2 * A + i] = d[p + 2] / 255; }
     const res = await yolo.run({ images: new ort.Tensor('float32', inp, [1, 3, S, S]) });
-    const o = res[yolo.outputNames[0]].data, N = 8400, cand = [];
+    const o = res[yolo.outputNames[0]].data, N = 8400, cand = [], candles = [], faceCand = [];
+    const box = i => { const cx = o[i] / S, cy = o[N + i] / S, w = o[2 * N + i] / S, h = o[3 * N + i] / S;
+      const b = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]; return MIRROR_RESULT ? [1 - b[2], b[1], 1 - b[0], b[3]] : b; };
+    const cls = Object.keys(KINDS).map(Number);
     for (let i = 0; i < N; i++) {
-      const sc = o[(4 + HEADPHONES) * N + i]; if (sc < 0.25) continue;
-      const cx = o[i] / S, cy = o[N + i] / S, w = o[2 * N + i] / S, h = o[3 * N + i] / S;
-      let b = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
-      if (facing === 'user') b = [1 - b[2], b[1], 1 - b[0], b[3]];
-      b.score = sc; cand.push(b);
+      let best = 0, bk = null;
+      for (const c of cls) { const sc = o[(4 + c) * N + i]; if (sc > best) { best = sc; bk = KINDS[c]; } }
+      if (bk && best >= (MIN_SCORE[bk] || 0.25)) { const b = box(i); b.score = best; b.kind = bk; cand.push(b); }
+      const cs = o[(4 + CANDLE) * N + i]; if (cs >= 0.4) { const b = box(i); b.score = cs; candles.push(b); }
+      const fs = o[(4 + FACE_CLS) * N + i]; if (fs >= 0.3) { const b = box(i); b.score = fs; b.kind = 'face'; faceCand.push(b); }
     }
     cand.sort((a, b) => b.score - a.score);
-    const iou = (a, b) => { const iw = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])), ih = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1])), I = iw * ih;
-      return I / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - I); };
-    const keep = []; for (const b of cand) if (keep.every(k => iou(k, b) < 0.45)) keep.push(b);
-    return keep.slice(0, 4);
+    const overlap = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+    let keep = [];
+    for (const b of cand) if (keep.every(k => !overlap(k, b) || (k.kind !== b.kind && !ANIMALS.includes(k.kind) && !ANIMALS.includes(b.kind)))) keep.push(b);
+    // a lit candle almost always sits on a cake
+    if (!keep.some(k => k.kind === 'cake') && candles.length) {
+      const c = candles.sort((a, b) => b.score - a.score)[0], cx = (c[0] + c[2]) / 2, w = (c[2] - c[0]) * 2.4;
+      const b = [cx - w / 2, c[1], cx + w / 2, Math.min(1, c[3] + (c[3] - c[1]) * 0.9)]; b.kind = 'cake'; b.score = c.score; keep.push(b);
+    }
+    // crowds of animals: only the 8 biggest, nothing tiny
+    const area = b => (b[2] - b[0]) * (b[3] - b[1]);
+    const ani = keep.filter(k => ANIMALS.includes(k.kind) && Math.min(k[2] - k[0], k[3] - k[1]) >= 0.052).sort((a, b) => area(b) - area(a)).slice(0, 8);
+    keep = keep.filter(k => !ANIMALS.includes(k.kind)).concat(ani);
+    // people's faces (for everyone after the first): non-max suppression
+    faceCand.sort((a, b) => b.score - a.score);
+    const iou = (a, b) => { const iw = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])), ih = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1])), I = iw * ih; return I / (area(a) + area(b) - I); };
+    const fk = []; for (const b of faceCand) if (fk.every(k => iou(k, b) < 0.3)) fk.push(b);
+    return keep.slice(0, 12).concat(fk.slice(0, 8));
+  }
+
+  // ---------- face parsing: hair, hat, glasses, earrings, necklace (and whole faces for everyone else in a group) ----------
+  const PC = { skin: 1, lbrow: 2, rbrow: 3, leye: 4, reye: 5, glasses: 6, lear: 7, rear: 8, earring: 9, nose: 10, mouth: 11, ulip: 12, llip: 13, neck: 14, necklace: 15, cloth: 16, hair: 17, hat: 18 };
+  async function parseFace(fb, roll = 0) {
+    const w = fb[2] - fb[0], h = fb[3] - fb[1], cx = (fb[0] + fb[2]) / 2, cy = (fb[1] + fb[3]) / 2, sz = Math.max(w, h) * 2.1;
+    const crop = [cx - sz / 2, cy - sz * 0.55, cx + sz / 2, cy + sz * 0.45], S = 512, W0 = stillM.width;
+    const pc = document.createElement('canvas'); pc.width = pc.height = S; const px = pc.getContext('2d', { willReadFrequently: true });
+    px.fillStyle = '#808080'; px.fillRect(0, 0, S, S);
+    // a tilted head is turned upright first (the parser is much better on upright faces)
+    px.save(); px.scale(S / (sz * W0), S / (sz * W0)); px.translate(-crop[0] * W0, -crop[1] * W0);
+    px.translate(cx * W0, cy * W0); px.rotate(-roll); px.translate(-cx * W0, -cy * W0);
+    px.drawImage(stillM, 0, 0); px.restore();
+    const d = px.getImageData(0, 0, S, S).data, A = S * S, inp = new Float32Array(3 * A), MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
+    for (let i = 0, p = 0; i < A; i++, p += 4) for (let c = 0; c < 3; c++) inp[c * A + i] = (d[p + c] / 255 - MEAN[c]) / STD[c];
+    const res = await parser.run({ [parser.inputNames[0]]: new ort.Tensor('float32', inp, [1, 3, S, S]) });
+    const o = res[parser.outputNames[0]].data, L = new Uint8Array(PN * PN), st = S / PN;
+    for (let gy = 0; gy < PN; gy++) for (let gx = 0; gx < PN; gx++) {
+      const q = (gy * st + st / 2 | 0) * S + (gx * st + st / 2 | 0); let best = -1e9, bc = 0;
+      for (let c = 0; c < 19; c++) { const v = o[c * A + q]; if (v > best) { best = v; bc = c; } }
+      L[gy * PN + gx] = bc;
+    }
+    return { L, crop, fb, roll, rc: [cx, cy] };
+  }
+  const pPt = (P, gx, gy) => { const x = P.crop[0] + (gx + 0.5) / PN * (P.crop[2] - P.crop[0]) - P.rc[0], y = P.crop[1] + (gy + 0.5) / PN * (P.crop[3] - P.crop[1]) - P.rc[1];
+    const co = Math.cos(P.roll), si = Math.sin(P.roll); return [P.rc[0] + x * co - y * si, P.rc[1] + x * si + y * co]; };
+  const lmRoll = lm => { let a = Math.atan2(lm[263][1] - lm[33][1], lm[263][0] - lm[33][0]); if (a > Math.PI / 2) a -= Math.PI; if (a < -Math.PI / 2) a += Math.PI; return Math.abs(a) < 0.12 ? 0 : a; };
+  const pMask = (P, ...cls) => { const m = new Uint8Array(PN * PN); for (let i = 0; i < PN * PN; i++) m[i] = cls.includes(P.L[i]) ? 1 : 0; return m; };
+  function pComps(P, minArea, ...cls) {                                    // outlines of each part, in picture coordinates
+    return traceOutlines(pMask(P, ...cls), minArea, PN).map(o => ({ area: o.area, grid: o.pts, pts: o.pts.map(([x, y]) => pPt(P, x, y)) }));
+  }
+  function pSegments(P, minArea, ...cls) {                                 // open lines: the crop edge is not a real edge
+    const out = [];
+    for (const c of pComps(P, minArea, ...cls)) {
+      let cur = [];
+      c.grid.forEach(([gx, gy], j) => { const q = c.pts[j];
+        const edge = gx <= 1 || gy <= 1 || gx >= PN - 2 || gy >= PN - 2 || q[0] < 0.01 || q[1] < 0.01 || q[0] > 0.99 || q[1] > 0.99;
+        if (edge) { if (cur.length > 4) out.push(cur); cur = []; } else cur.push(q); });
+      if (cur.length > 4) out.push(cur);
+    }
+    return out;
+  }
+  const centre = pts => [pts.reduce((a, q) => a + q[0], 0) / pts.length, pts.reduce((a, q) => a + q[1], 0) / pts.length];
+  // what the face parse adds around a face: hair, hat, glasses, earrings, necklace
+  function parsedExtras(P, T, r, eyes) {
+    const out = [], cell = (P.crop[2] - P.crop[0]) / PN;
+    for (const seg of pSegments(P, 30, PC.hair)) out.push({ pts: simplify(seg, r * 0.07).map(T), w: 1.0 });
+    // a few wavy strands inside the hair, kid style
+    const hm = pMask(P, PC.hair), inHair = (x, y) => x >= 0 && y >= 0 && x < PN && y < PN && hm[y * PN + x];
+    const fcx = (P.fb[0] + P.fb[2]) / 2, fcy = (P.fb[1] + P.fb[3]) / 2, cand = [];
+    for (let y = 3; y < PN - 3; y += 3) for (let x = 3; x < PN - 3; x += 3) if (inHair(x, y) && inHair(x - 3, y) && inHair(x + 3, y) && inHair(x, y - 3) && inHair(x, y + 3)) cand.push([x, y]);
+    for (let k = 0; k < 3 && cand.length > 20 && r > 0.06; k++) {
+      const [sx, sy] = cand[Math.floor((k * 0.37 + 0.11) * cand.length) % cand.length], q0 = pPt(P, sx, sy);
+      let dx = q0[0] - fcx, dy = q0[1] - fcy; const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+      const pts = [];
+      for (let t = 0; t < 7; t++) { const q = [q0[0] + dx * t * r * 0.06 - dy * Math.sin(t * 1.4) * r * 0.04, q0[1] + dy * t * r * 0.06 + dx * Math.sin(t * 1.4) * r * 0.04];
+        const gx = Math.round((q[0] - P.crop[0]) / cell - 0.5), gy = Math.round((q[1] - P.crop[1]) / cell - 0.5); if (inHair(gx, gy)) pts.push(T(q)); }
+      if (pts.length > 3) out.push({ pts, w: 0.75 });
+    }
+    for (const seg of pSegments(P, 30, PC.hat)) out.push({ pts: simplify(seg, r * 0.08).map(T), w: 1.15 });
+    if (eyes.length === 2 && pMask(P, PC.glasses).reduce((a, v) => a + v, 0) > 14) {
+      for (const [ec, ew] of eyes) out.push({ pts: closeLoop(arc(ec[0], ec[1], ew * 0.85, 0, 345, 14)).map(T), w: 0.9 });
+      const [[e1, w1], [e2, w2]] = eyes, L = Math.hypot(e2[0] - e1[0], e2[1] - e1[1]) || 1, dv = [(e2[0] - e1[0]) / L, (e2[1] - e1[1]) / L];
+      out.push({ pts: [[e1[0] + dv[0] * w1 * 0.85, e1[1] + dv[1] * w1 * 0.85], [e2[0] - dv[0] * w2 * 0.85, e2[1] - dv[1] * w2 * 0.85]].map(T), w: 0.8 });
+    }
+    for (const c of pComps(P, 2, PC.earring)) out.push({ dot: T(centre(c.pts)), r: r * 0.05 });
+    for (const c of pComps(P, 10, PC.necklace)) {
+      const xs = c.pts.map(q => q[0]), lo = Math.min(...xs), hi = Math.max(...xs), mid = (lo + hi) / 2, yb = Math.max(...c.pts.map(q => q[1]));
+      out.push({ pts: [[lo, yb - r * 0.15], [mid, yb], [hi, yb - r * 0.15]].map(T), w: 0.75 });
+      out.push({ dot: T([mid, yb + r * 0.06]), r: r * 0.05 });
+    }
+    return out;
+  }
+  // a whole face drawn from the parse alone (everyone in a group after the first person)
+  function parsedFace(P) {
+    const out = [], stickers = [], I = q => q, r = (P.fb[2] - P.fb[0]) * 0.55;
+    const head = pComps(P, 40, PC.skin, PC.lbrow, PC.rbrow, PC.leye, PC.reye, PC.nose, PC.mouth, PC.ulip, PC.llip, PC.glasses).sort((a, b) => b.area - a.area)[0];
+    if (!head) return null;
+    const hc = centre(head.pts);
+    out.push({ pts: closeLoop(simplifyClosed(head.pts, r * 0.09)), w: 1.15 });
+    const cell = (P.crop[2] - P.crop[0]) / PN, eyes = [];
+    for (const cls of [PC.leye, PC.reye]) {
+      const e = pComps(P, 1, cls).sort((a, b) => b.area - a.area)[0]; if (!e) continue;
+      const xs = e.pts.map(q => q[0]), ys = e.pts.map(q => q[1]), ew = Math.max(Math.max(...xs) - Math.min(...xs), cell * 2), eh = Math.max(...ys) - Math.min(...ys);
+      const ec = centre(e.pts); eyes.push([ec, ew]);
+      if (eh < ew * 0.2) out.push({ pts: [[Math.min(...xs), ec[1]], [Math.max(...xs), ec[1]]], w: 0.8 });
+      else out.push({ dot: ec, r: Math.max(r * 0.07, ew * 0.3) });
+    }
+    for (const cls of [PC.lbrow, PC.rbrow]) {
+      const b = pComps(P, 1, cls).sort((a, c) => c.area - a.area)[0]; if (!b) continue;
+      const l = b.pts.reduce((a, q) => q[0] < a[0] ? q : a), rr = b.pts.reduce((a, q) => q[0] > a[0] ? q : a), t = b.pts.reduce((a, q) => q[1] < a[1] ? q : a);
+      out.push({ pts: [l, [(l[0] + rr[0]) / 2, t[1]], rr], w: 0.8 });
+    }
+    const n = pComps(P, 2, PC.nose).sort((a, b) => b.area - a.area)[0];
+    if (n) { const tp = n.pts.reduce((a, q) => q[1] < a[1] ? q : a), bt = n.pts.reduce((a, q) => q[1] > a[1] ? q : a);
+      out.push({ pts: [[(tp[0] * 2 + bt[0]) / 3, tp[1] + (bt[1] - tp[1]) * 0.35], bt, [bt[0] + (bt[0] > hc[0] ? -1 : 1) * r * 0.1, bt[1] - r * 0.03]], w: 0.8 }); }
+    const lips = pComps(P, 2, PC.mouth, PC.ulip, PC.llip).sort((a, b) => b.area - a.area)[0];
+    const mouthArea = pMask(P, PC.mouth).reduce((a, v) => a + v, 0);
+    if (lips) {
+      const l = lips.pts.reduce((a, q) => q[0] < a[0] ? q : a), rr = lips.pts.reduce((a, q) => q[0] > a[0] ? q : a), mc = centre(lips.pts);
+      if (mouthArea > lips.area * 0.25) out.push({ pts: closeLoop(simplifyClosed(lips.pts, r * 0.06)), w: 0.95 });
+      else out.push({ pts: [l, [mc[0], mc[1] + r * 0.04], rr], w: 0.95 });
+
+    }
+    for (const seg of pSegments(P, 4, PC.lear, PC.rear)) out.push({ pts: simplify(seg, r * 0.05), w: 0.8 });
+    out.push(...parsedExtras(P, I, r, eyes));
+    return { strokes: out, wow: !!lips && mouthArea > head.area * 0.035, c: hc, r };
+  }
+
+  // ---------- logos and signs: bright, high-contrast shapes are drawn letter by letter ----------
+  const LN = 160;
+  function findLogos(avoid) {
+    const c = document.createElement('canvas'); c.width = c.height = LN; const x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(stillM, 0, 0, LN, LN); const d = x.getImageData(0, 0, LN, LN).data, lum = new Float32Array(LN * LN);
+    for (let i = 0, p = 0; i < LN * LN; i++, p += 4) lum[i] = d[p] * 0.299 + d[p + 1] * 0.587 + d[p + 2] * 0.114;
+    const I = new Float64Array((LN + 1) * (LN + 1));                       // integral image for the local average
+    for (let y = 0; y < LN; y++) { let row = 0; for (let xx = 0; xx < LN; xx++) { row += lum[y * LN + xx]; I[(y + 1) * (LN + 1) + xx + 1] = I[y * (LN + 1) + xx + 1] + row; } }
+    const R6 = 7, bin = new Uint8Array(LN * LN);
+    for (let y = 0; y < LN; y++) for (let xx = 0; xx < LN; xx++) {
+      const x0 = Math.max(0, xx - R6), y0 = Math.max(0, y - R6), x1 = Math.min(LN, xx + R6 + 1), y1 = Math.min(LN, y + R6 + 1);
+      const mean = (I[y1 * (LN + 1) + x1] - I[y0 * (LN + 1) + x1] - I[y1 * (LN + 1) + x0] + I[y0 * (LN + 1) + x0]) / ((x1 - x0) * (y1 - y0));
+      const q = [(xx + 0.5) / LN, (y + 0.5) / LN];
+      if (lum[y * LN + xx] > 165 && lum[y * LN + xx] - mean > 38 && !avoid.some(([ac, ar]) => Math.hypot(q[0] - ac[0], q[1] - ac[1]) < ar)) bin[y * LN + xx] = 1;
+    }
+    let comps = traceOutlines(bin, 5, LN).filter(o => o.area < LN * LN * 0.08);
+    // letters come in rows: keep shapes with at least two neighbours on about the same line, or big standalone marks
+    const box = o => { const xs = o.pts.map(q => q[0]), ys = o.pts.map(q => q[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+    const bx = comps.map(box);
+    comps = comps.filter((o, i) => { const b = bx[i], h = b[3] - b[1] + 1;
+      if (o.area >= 60) return true;
+      let n = 0; bx.forEach((q, j) => { if (j !== i && Math.abs((q[1] + q[3]) / 2 - (b[1] + b[3]) / 2) < h * 0.6 && Math.abs(q[0] - b[2]) < h * 1.2 + 2 || j !== i && Math.abs(b[0] - q[2]) < h * 1.2 + 2 && Math.abs((q[1] + q[3]) / 2 - (b[1] + b[3]) / 2) < h * 0.6) n++; });
+      return n >= 1 && h >= 5;
+    }).sort((a, b) => b.area - a.area).slice(0, 60);
+    return comps.map(o => { const pts = closeLoop(simplifyClosed(o.pts, 0.55).map(([gx, gy]) => [(gx + 0.5) / LN, (gy + 0.5) / LN]));
+      const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), pad = 1.5 / LN;
+      return { pts, w: 0.7, box: [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) + pad, Math.max(...ys) + pad] }; });
   }
   function applyResult(res) {
     const m = res.segmentationMask;
     segReady = false; person.fill(0);
     if (m) {
       mctx.save(); mctx.clearRect(0, 0, M, M);
-      if (facing === 'user') { mctx.translate(M, 0); mctx.scale(-1, 1); }
+      if (MIRROR_RESULT) { mctx.translate(M, 0); mctx.scale(-1, 1); }
       mctx.drawImage(m, 0, 0, m.width, m.height, 0, 0, M, M); mctx.restore();
       const d = mctx.getImageData(0, 0, M, M).data;
       for (let i = 0, p = 0; i < M * M; i++, p += 4) person[i] = Math.min(d[p + 3], Math.max(d[p], d[p + 1], d[p + 2])) / 255;
@@ -168,16 +328,49 @@
     hands = [res.leftHandLandmarks, res.rightHandLandmarks].filter(Boolean).map(h => h.map(U));
   }
 
+  // everyone else in a group: run the face model again on a crop around each extra face
+  async function faceInCrop(b) {
+    for (const [f, up] of [[3.6, 0.3], [2.4, 0.45], [5, 0.25]]) { const lm = await faceInCropAt(b, f, up); if (lm) return lm; }
+    return null;
+  }
+  async function faceInCropAt(b, f, up) {
+    const w = b[2] - b[0], h = b[3] - b[1], cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, sz = Math.max(w, h) * f, S = 384, W0 = stillM.width;
+    const x0 = cx - sz / 2, y0 = cy - sz * up;                            // head near the top, shoulders in view: the body finder needs them
+    const cc = document.createElement('canvas'); cc.width = cc.height = S; const cx2 = cc.getContext('2d');
+    cx2.fillStyle = '#777'; cx2.fillRect(0, 0, S, S); cx2.drawImage(stillM, x0 * W0, y0 * W0, sz * W0, sz * W0, 0, 0, S, S);
+    let lm = null;
+    if (hol.reset) hol.reset();                                              // forget the last picture's tracking
+    for (let k = 0; k < 2; k++) { lastResult = null; await hol.send({ image: cc }); if (lastResult && lastResult.faceLandmarks) lm = lastResult.faceLandmarks; }
+    if (!lm) return null;
+    const pts = lm.map(p => [x0 + p.x * sz, y0 + p.y * sz]), c = centroid(pts);
+    return c[0] > b[0] && c[0] < b[2] && c[1] > b[1] - h * 0.2 && c[1] < b[3] + h * 0.2 ? pts : null;
+  }
+  // a tilted head confuses the face model: turn the picture so the head is upright, find the face again, turn the points back
+  async function straightenFace(raw) {
+    let roll = Math.atan2(raw[263].y - raw[33].y, raw[263].x - raw[33].x);
+    if (Math.abs(roll) < 0.17) return;                                       // under ~10 degrees: fine as it is
+    const S = still.width, cx = raw[1].x * S, cy = raw[1].y * S;
+    const rc = document.createElement('canvas'); rc.width = rc.height = S; const rx = rc.getContext('2d');
+    rx.fillStyle = '#777'; rx.fillRect(0, 0, S, S);
+    rx.translate(cx, cy); rx.rotate(-roll); rx.translate(-cx, -cy); rx.drawImage(still, 0, 0);
+    let best = null;
+    if (hol.reset) hol.reset();
+    for (let k = 0; k < 2; k++) { lastResult = null; await hol.send({ image: rc }); if (lastResult && lastResult.faceLandmarks) best = lastResult.faceLandmarks; }
+    if (!best) return;
+    const co = Math.cos(roll), si = Math.sin(roll);
+    face = best.map(p => { const x = p.x * S - cx, y = p.y * S - cy; return U({ x: (cx + x * co - y * si) / S, y: (cy + x * si + y * co) / S }); });
+  }
+
   // background brightness of the frozen frame
   function sampleStill() {
-    camCtx.save(); if (facing === 'user') { camCtx.translate(M, 0); camCtx.scale(-1, 1); }
+    camCtx.save(); if (MIRROR_RESULT) { camCtx.translate(M, 0); camCtx.scale(-1, 1); }
     camCtx.drawImage(still, 0, 0, M, M); camCtx.restore();
     const d = camCtx.getImageData(0, 0, M, M).data;
     for (let i = 0, p = 0; i < M * M; i++, p += 4) bgLum[i] = d[p] * 0.299 + d[p + 1] * 0.587 + d[p + 2] * 0.114;
   }
 
   // ---------- contour tracing on a binary grid ----------
-  function traceOutlines(bin, minArea) {
+  function traceOutlines(bin, minArea, M = MM) {
     const lab = new Int32Array(M * M), out = []; let id = 0;
     const DX = [1, 1, 0, -1, -1, -1, 0, 1], DY = [0, 1, 1, 1, 0, -1, -1, -1];
     const at = (x, y) => x >= 0 && y >= 0 && x < M && y < M && bin[y * M + x];
@@ -233,6 +426,7 @@
       near[y * M + x] = segReady ? m : 0;
     }
     // background: boundaries between a few brightness levels (mountains, horizon, clouds, door frames...)
+    const crowd = people.length + extraFaces.length >= 3;
     if (bgLum[0] >= 0) {
       const sm = new Float32Array(M * M);
       for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) { let s = 0, c = 0;
@@ -255,20 +449,34 @@
         }
       }
       bgLines.sort((a, b) => b.length - a.length);
-      for (const l of bgLines.slice(0, MAX_BG_LINES)) strokes.push({ pts: simplify(l, 1.6).map(toU), w: 1.0 });
+      // lines never run through a logo: they stop at its edge
+      const inLogo = q => logoLines.some(o => q[0] > o.box[0] && q[0] < o.box[2] && q[1] > o.box[1] && q[1] < o.box[3]);
+      for (const l of bgLines.slice(0, crowd ? 5 : MAX_BG_LINES)) {
+        let cur = [];
+        for (const q of resample(simplify(l, 1.6).map(toU), 0.008)) { if (inLogo(q)) { if (cur.length > 3) strokes.push({ pts: cur, w: 1.0 }); cur = []; } else cur.push(q); }
+        if (cur.length > 3) strokes.push({ pts: cur, w: 1.0 });
+      }
     }
+    strokes.push(...logoLines);
     // regions where a detailed doodle replaces the silhouette outline: the face and each hand
     const holes = [];
     let faceStrokes = [], handStrokes = [], stickerStrokes = [], faceInfo = null;
-    if (face) {
+    // every head in the picture: people with face points first, then faces known only from the parse
+    const lmCentre = lm => { const cc = centroid(FACE_OVAL.map(i => lm[i])); return [cc, FACE_OVAL.reduce((a, i) => a + Math.hypot(lm[i][0] - cc[0], lm[i][1] - cc[1]), 0) / FACE_OVAL.length]; };
+    heads = people.map(p => lmCentre(p.lm)).concat(extraFaces.map(f => [f.c, f.r]));
+    for (const [pi, who] of people.entries()) {
+      const face = who.lm, mainParse = who.P;
       // a small face is enlarged around its centre (kids draw big heads), so the features stay readable
       const c0 = centroid(FACE_OVAL.map(i => face[i]));
       const r0 = FACE_OVAL.reduce((s, i) => s + Math.hypot(face[i][0] - c0[0], face[i][1] - c0[1]), 0) / FACE_OVAL.length;
-      const k = Math.min(2.0, Math.max(1, 0.13 / r0));
+      const k = headScale(c0, r0, pi);
       const F = face.map(p => [c0[0] + (p[0] - c0[0]) * k, c0[1] + (p[1] - c0[1]) * k]);
       const face_ = F, pick = idx => idx.map(i => F[i]);
+      const T = q => [c0[0] + (q[0] - c0[0]) * k, c0[1] + (q[1] - c0[1]) * k];
+      if (mainParse) { const eyes = EYES.map(([up, low, [a, b]]) => [[(face[a][0] + face[b][0]) / 2, (face[a][1] + face[b][1]) / 2], Math.hypot(face[a][0] - face[b][0], face[a][1] - face[b][1])]);
+        faceStrokes.push(...parsedExtras(mainParse, T, r0, eyes)); }
       const oval = pick(FACE_OVAL), c = c0, r = r0 * k;
-      holes.push([c, r * 1.12]);
+      holes.push([c, r * (mainParse ? 1.25 : 1.12)]);
       // head: the real face outline, simplified to a lumpy childlike shape
       faceStrokes.push({ pts: closeLoop(simplifyClosed(oval, r * 0.09)), w: 1.15 });
       const fw = r * 2, eyeOpen = [];
@@ -292,12 +500,11 @@
       else faceStrokes.push({ pts: simplify(pick(MOUTH_LINE), mw * 0.05), w: 0.95 });
       // expression stickers: big open mouth -> WOW!, smile -> heart, both eyes shut -> Zzz
       const smile = ((F[13][1] + F[14][1]) / 2 - (F[61][1] + F[291][1]) / 2) / (mw || 1);
-      faceInfo = { c, r };
+      if (pi === 0) faceInfo = { c, r };
       if (gap > 0.3) stickerStrokes.push(...stickerWow(c, r));
       else if (eyeOpen.length === 2 && eyeOpen[0] < CLOSED_EYE && eyeOpen[1] < CLOSED_EYE) stickerStrokes.push(...stickerZzz(c, r));
       if (smile > 0.1 && mw / fw > 0.36 && gap <= 0.3) stickerStrokes.push(...stickerHeart(c, r));
       // headphones on this head? over-ear = wider than the face, otherwise wired earbuds
-      const T = q => [c0[0] + (q[0] - c0[0]) * k, c0[1] + (q[1] - c0[1]) * k];
       const ph = phones.find(b => { const bc = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]; return Math.hypot(bc[0] - c0[0], bc[1] - c0[1]) < r0 * 1.8; });
       if (ph) { ph.used = true; stickerStrokes.push(...(ph[2] - ph[0] > r0 * 2.3 ? headphonesOver(F, c, r, T([0, ph[1]])[1]) : earbuds(F, c, r))); }
       // ears: a little bump just outside each side of the face (hidden under over-ear headphones)
@@ -308,7 +515,10 @@
         faceStrokes.push({ pts: arc(ex, ey, r * 0.16, a0 - 80, a0 + 80, 8), w: 0.8 });
       }
     }
+    extraFaces.forEach((f, i) => { const k = headScale(f.c, f.r, people.length + i), sc = st => scaleStroke(st, f.c, k);
+      faceStrokes.push(...f.strokes.map(sc)); stickerStrokes.push(...(f.wow ? stickerWow(f.c, f.r * k) : [])); holes.push([f.c, f.r * k * 1.25]); });
     for (const b of phones) if (!b.used) stickerStrokes.push(...headphonesBox(b));   // headphones not on a detected face
+    for (const b of objects) stickerStrokes.push(...icon(b.kind, b));                 // things around you, kid style
     for (const h0 of hands) {
       const xs = h0.map(p => p[0]), ys = h0.map(p => p[1]);
       const hc = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
@@ -337,7 +547,7 @@
     // person: one wobbly outline of the silhouette, with the face and hands cut out for their own doodles
     if (segReady) {
       const bin = new Uint8Array(M * M); for (let i = 0; i < M * M; i++) bin[i] = person[i] > 0.5 ? 1 : 0;
-      const outs = traceOutlines(bin, 40).sort((a, b) => b.area - a.area).slice(0, 1);
+      const outs = traceOutlines(bin, 40).sort((a, b) => b.area - a.area).slice(0, Math.max(1, people.length + extraFaces.length));
       for (const o of outs) {
         const pts = simplifyClosed(o.pts, 1.1).map(toU); let cur = [];
         for (const p of resample(closeLoop(pts), 0.012)) {
@@ -381,6 +591,18 @@
     return out;
   }
 
+  // kids draw big heads: grow each head up to 2x, but never into a neighbour's head
+  let heads = [];
+  function headScale(c, r, self) {
+    const others = heads.filter((_, i) => i !== self);
+    let k = Math.min(2.0, Math.max(1, 0.13 / r));
+    for (const [oc, orr] of others) k = Math.min(k, (Math.hypot(oc[0] - c[0], oc[1] - c[1]) * 0.5) / (r * 1.15));
+    return Math.max(1, k);
+  }
+  function scaleStroke(st, c, k) {
+    const m = q => [c[0] + (q[0] - c[0]) * k, c[1] + (q[1] - c[1]) * k];
+    return st.dot ? { dot: m(st.dot), r: st.r * k } : { pts: st.pts.map(m), w: st.w };
+  }
   // ---------- stickers, drawn as strokes so they wobble with everything else ----------
   const clampU = v => Math.min(0.95, Math.max(0.05, v));
   // place a box of size (w,h) beside the face on the side with more room, above eye level
@@ -424,6 +646,59 @@
     for (let i = 0; i <= 24; i++) { const t = i / 24 * Math.PI * 2;
       pts.push([cx + s * 0.5 * Math.pow(Math.sin(t), 3), cy - s * 0.5 * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16]); }
     return [{ pts, w: 0.95 }];
+  }
+  // ---------- childlike icons for detected things, drawn inside the detection box ----------
+  const rrect = (x0, y0, x1, y1, rc) => closeLoop([[x0 + rc, y0], [x1 - rc, y0], [x1, y0 + rc], [x1, y1 - rc], [x1 - rc, y1], [x0 + rc, y1], [x0, y1 - rc], [x0, y0 + rc]]);
+  const ell = (ex, ey, rx, ry, n = 16) => { const p = []; for (let i = 0; i <= n; i++) { const t = i / n * Math.PI * 2; p.push([ex + rx * Math.cos(t), ey + ry * Math.sin(t)]); } return p; };
+  function icon(kind, b) {
+    if (kind === 'camera') { const cx0 = (b[0] + b[2]) / 2, cy0 = (b[1] + b[3]) / 2, hw = (b[2] - b[0]) * .6, hh = (b[3] - b[1]) * .6; b = [cx0 - hw, cy0 - hh, cx0 + hw, cy0 + hh]; }   // the lens sticks out of the box
+    const [x0, y0, x1, y1] = b, w = x1 - x0, h = y1 - y0, cx = (x0 + x1) / 2, m = Math.min(w, h), out = [], L = (pts, wd) => out.push({ pts, w: wd }), D = (dot, r) => out.push({ dot, r });
+    if (kind === 'camera') {
+      L(rrect(x0 + .04 * w, y0 + .26 * h, x1 - .04 * w, y1 - .06 * h, m * .1), 1.1);
+      L([[x0 + .16 * w, y0 + .27 * h], [x0 + .2 * w, y0 + .12 * h], [x0 + .42 * w, y0 + .12 * h], [x0 + .46 * w, y0 + .27 * h]], 1.0);
+      const lx = cx + .05 * w, ly = y0 + .6 * h;
+      L(ell(lx, ly, m * .27, m * .27), 1.1); L(ell(lx, ly, m * .12, m * .12, 10), 0.8); D([x1 - .17 * w, y0 + .38 * h], m * .04);
+    } else if (kind === 'cake') {
+      L(rrect(x0 + .08 * w, y0 + .5 * h, x1 - .08 * w, y1 - .04 * h, m * .05), 1.1);
+      const wave = []; for (let t = 0; t <= 8; t++) wave.push([x0 + .08 * w + t / 8 * .84 * w, y0 + .5 * h + (t % 2 ? .07 * h : 0)]); L(wave, 0.9);
+      L(rrect(x0 + .24 * w, y0 + .3 * h, x1 - .24 * w, y0 + .5 * h, m * .04), 1.0);
+      L([[cx, y0 + .3 * h], [cx, y0 + .16 * h]], 0.9);
+      L(closeLoop([[cx, y0 + .02 * h], [cx + .04 * w, y0 + .1 * h], [cx, y0 + .14 * h], [cx - .04 * w, y0 + .1 * h]]), 0.8);
+    } else if (kind === 'doll') {
+      const hx = cx, hy = y0 + .3 * h, r = m * .22;
+      L(ell(hx, hy, r, r), 1.1);
+      for (const sx of [-1, 1]) { L(ell(hx + sx * r * .85, hy - r * .85, r * .35, r * .35, 8), 0.9); D([hx + sx * r * .38, hy - r * .05], m * .03); }
+      L(arc(hx, hy + r * .25, r * .25, 20, 160, 6), 0.8);
+      L(ell(cx, y0 + .72 * h, w * .3, h * .24), 1.1);
+      for (const sx of [-1, 1]) L([[cx + sx * w * .22, y0 + .62 * h], [cx + sx * w * .4, y0 + .55 * h]], 1.0);
+    } else if (kind === 'bird' && m < 0.143) {                              // small birds: the classic kid 'm'
+      const sz = Math.max(m * .45, 0.029), by = (y0 + y1) / 2;
+      L(arc(cx - sz / 2, by + sz * .15, sz / 2, 200, 340, 6), 1.0); L(arc(cx + sz / 2, by + sz * .15, sz / 2, 200, 340, 6), 1.0);
+    } else if (kind === 'bird') {
+      const bx = cx, by = y0 + .55 * h, hx = bx - w * .3;
+      L(ell(bx, by, w * .26, h * .13), 1.1); L(ell(hx, by - h * .05, m * .11, m * .11, 12), 1.1); D([hx - m * .03, by - h * .07], m * .025);
+      L([[hx - m * .1, by - h * .07], [hx - m * .22, by - h * .02], [hx - m * .1, by]], 0.9);
+      L([[bx - w * .12, by - h * .1], [bx - w * .02, y0 + .08 * h], [bx + w * .06, by - h * .12]], 1.1);
+      L([[bx - w * .05, by + h * .02], [bx + w * .2, y0 + .2 * h], [bx + w * .22, by - h * .05]], 1.1);
+      const tx = bx + w * .26; L([[tx, by - h * .03], [tx + w * .18, by - h * .12], [tx + w * .2, by + h * .1], [tx, by + h * .03]], 1.0);
+    } else if (kind === 'fish') {
+      L(ell(cx - w * .05, y0 + .5 * h, w * .32, h * .22), 1.1);
+      const tx = cx + w * .27; L([[tx, y0 + .5 * h], [tx + w * .2, y0 + .3 * h], [tx + w * .2, y0 + .7 * h], [tx, y0 + .5 * h]], 1.0);
+      D([cx - w * .22, y0 + .45 * h], m * .03); L([[cx - w * .34, y0 + .55 * h], [cx - w * .28, y0 + .58 * h]], 0.8);
+    } else {                                                                   // dog, cat and other four-legged friends
+      const bx = cx + w * .06, by = y0 + .6 * h, hx = cx - w * .26, hy = y0 + .36 * h, hr = m * .17;
+      L(ell(bx, by, w * .3, h * .16), 1.1); L(ell(hx, hy, hr, hr, 14), 1.1);
+      for (const sx of [-1, 1]) D([hx + sx * hr * .4, hy - hr * .1], m * .025);
+      D([hx, hy + hr * .3], m * .03);
+      if (kind === 'dog') for (const sx of [-1, 1]) L(ell(hx + sx * hr, hy + hr * .2, hr * .3, hr * .6, 10), 1.0);
+      else if (kind === 'cat') for (const sx of [-1, 1]) {
+        L([[hx + sx * hr * .3, hy - hr * .9], [hx + sx * hr * .75, hy - hr * 1.6], [hx + sx * hr * .95, hy - hr * .5]], 1.0);
+        for (const dy of [-.05, .15]) L([[hx + sx * hr * .4, hy + hr * (.3 + dy)], [hx + sx * hr * 1.3, hy + hr * (.2 + dy * 2)]], 0.6);
+      } else for (const sx of [-1, 1]) L(ell(hx + sx * hr * .75, hy - hr * .85, hr * .3, hr * .3, 8), 1.0);
+      for (const lx of [-.2, -.07, .08, .2]) L([[bx + w * lx, by + h * .13], [bx + w * lx, y1 - .04 * h]], 1.0);
+      L([[bx + w * .29, by - h * .05], [bx + w * .4, by - h * .2], [bx + w * .44, by - h * .32]], 1.0);
+    }
+    return out;
   }
   // over-ear headphones: two cups on the ears and a band over the head
   function headphonesOver(F, c, r, boxTop) {
@@ -537,11 +812,18 @@
     }
   }
   // per-cell random numbers for the pixel flash dissolve
-  const cellRnd = new Float32Array(G * G).map((_, i) => { let h = Math.imul(i + 7, 2654435761) >>> 0; h = (h ^ (h >>> 15)) >>> 0; return (Math.imul(h, 2246822519) >>> 0) / 4294967296; });
+  let cellRnd = makeRnd();
+  function makeRnd() { return new Float32Array(G * G).map((_, i) => { let h = Math.imul(i + 7, 2654435761) >>> 0; h = (h ^ (h >>> 15)) >>> 0; return (Math.imul(h, 2246822519) >>> 0) / 4294967296; }); }
+  function setGrid(g) {
+    if (g === G) return;
+    G = g; HR = G * 5; work.width = work.height = HR;
+    cellsCv.width = cellsCv.height = G; cellImg = cctx.createImageData(G, G);
+    viewS.width = viewS.height = G; cellRnd = makeRnd(); resize();
+  }
 
   // ---------- flow: countdown -> flash + snapshot -> doodle ----------
   async function begin() {
-    bar.classList.remove('on'); msg.textContent = ''; recToken++; shareFile = null; shareBtn.disabled = true;
+    setGrid(96); bar.classList.remove('on'); msg.textContent = ''; recToken++; shareFile = null; shareBtn.disabled = true;
     try { await startCam(); } catch (e) { mode = 'error'; msg.textContent = '請允許瀏覽器使用鏡頭'; document.getElementById('retake').textContent = '開啟鏡頭'; document.getElementById('gif').disabled = true; bar.classList.add('on'); return; }
     document.getElementById('retake').textContent = '重拍';
     // wait for the model first: loading it can freeze the page for a moment, and the countdown must stay smooth
@@ -563,18 +845,52 @@
     if (hol) {
       try {
         await holReady;
-        for (let k = 0; k < 3; k++) { lastResult = null; await hol.send({ image: still }); if (lastResult) applyResult(lastResult); }   // a few passes on the same frame find both hands more reliably
+        let rawFace = null;
+        for (let k = 0; k < 3; k++) { lastResult = null; await hol.send({ image: still }); if (lastResult) { applyResult(lastResult); if (lastResult.faceLandmarks) rawFace = lastResult.faceLandmarks; } }   // a few passes on the same frame find both hands more reliably
+        if (rawFace) await straightenFace(rawFace);
       } catch (e) { msg.textContent = '人物偵測失敗，只畫出背景'; }
     } else msg.textContent = '模型沒有載入（請確認網路），只畫出背景';
-    phones = [];
+    phones = []; objects = [];
     initYolo();
     await Promise.race([yoloReady, new Promise(r => setTimeout(r, 12000))]);
-    if (yolo) { try { phones = await detectHeadphones(); } catch (e) { phones = []; } }
+    let faceBoxes = [];
+    if (yolo) { try { const all = await detectObjects(); phones = all.filter(b => b.kind === 'headphones'); faceBoxes = all.filter(b => b.kind === 'face'); objects = all.filter(b => b.kind !== 'headphones' && b.kind !== 'face'); } catch (e) {} }
+    // the picture as you see it, for parsing and logos
+    stillMCtx.save(); if (MIRROR_RESULT) { stillMCtx.translate(stillM.width, 0); stillMCtx.scale(-1, 1); }
+    stillMCtx.drawImage(still, 0, 0, stillM.width, stillM.height); stillMCtx.restore();
+    mainParse = null; extraFaces = [];
+    await Promise.race([parseReady, new Promise(r => setTimeout(r, 8000))]);
+    let mainBox = null;
+    if (face) { const xs = face.map(q => q[0]), ys = face.map(q => q[1]); mainBox = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; }
+    const others = faceBoxes.filter(b => b[2] - b[0] >= 0.045 && (b.score >= 0.5 || b[2] - b[0] >= 0.08)).filter(b => { const c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+      return !(mainBox && c[0] > mainBox[0] - 0.02 && c[0] < mainBox[2] + 0.02 && c[1] > mainBox[1] - 0.04 && c[1] < mainBox[3] + 0.02); }).slice(0, 5);
+    if (parser) {
+      try {
+        if (mainBox) mainParse = await parseFace(mainBox, lmRoll(face));
+      } catch (e) { mainParse = null; }
+    }
+    people = face ? [{ lm: face, P: mainParse }] : [];
+    for (const b of others) {
+      let lm = null, P = null;
+      try { lm = await faceInCrop(b); } catch (e) {}
+      try { if (parser) P = await parseFace(b, lm ? lmRoll(lm) : 0); } catch (e) {}
+      if (lm) people.push({ lm, P });
+      else if (P) { const f = parsedFace(P); if (f) extraFaces.push(f); }
+    }
+    const avoid = []; if (mainBox) avoid.push([[(mainBox[0] + mainBox[2]) / 2, (mainBox[1] + mainBox[3]) / 2], (mainBox[2] - mainBox[0]) * 0.75]);
+    for (const f of extraFaces) avoid.push([f.c, f.r * 1.3]);
+    for (const p of people.slice(1)) { const xs = p.lm.map(q => q[0]), ys = p.lm.map(q => q[1]); avoid.push([[(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2], (Math.max(...xs) - Math.min(...xs)) * 0.75]); }
+    logoLines = findLogos(avoid);
+    if (window.__dbg) console.error('DBG', JSON.stringify({ face: !!face, main: !!mainParse, fb: faceBoxes.map(b => b.map(v => +v.toFixed(2)).concat(+b.score.toFixed(2))), others: others.length, hands: hands.length, people: people.length, extra: extraFaces.length, logos: logoLines.length, objects: objects.map(o => o.kind) }));
+    const nFaces = people.length + extraFaces.length;
+    const fw = [mainBox ? mainBox[2] - mainBox[0] : 1].concat(others.map(b => b[2] - b[0])), small = nFaces >= 2 && Math.min(...fw) < 0.11;
+    setGrid(Math.max(nFaces > 4 || small ? 160 : nFaces > 2 ? 128 : 96, logoLines.length >= 6 ? 128 : 96));
     if (window.__testPhones && face) {                                     // preview hook: pretend headphones were found
       const xs = face.map(q => q[0]), ys = face.map(q => q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), w = x1 - x0;
       phones = [window.__testPhones === 'over' ? [x0 - w * 0.35, y0 - w * 0.3, x1 + w * 0.35, (y0 + y1) / 2 + w * 0.2] : [x0, y0 + w * 0.3, x1, y1 + w * 0.2]];
     }
     strokesCache = buildStrokes();
+    if (window.__dbg) window.__strokes = { strokes: strokesCache, people: people.length, extra: extraFaces.map(f => [f.c, f.r]), logos: logoLines.length };
     const wait = Math.max(0, 520 - (performance.now() - modeT));             // let the flash finish
     setTimeout(() => { mode = 'result'; lastBoil = 0; bar.classList.add('on'); document.getElementById('gif').disabled = false; setTimeout(prepareShare, 150); }, wait);
   }
@@ -669,7 +985,7 @@
     btn.disabled = false; btn.textContent = '下載 GIF';
   }
   function gifBlob() {
-    const C = 5, W = G * C, dark = c => c.map(v => Math.round(v * 0.72)), GLOW = [30, 86, 48];
+    const C = Math.max(3, Math.round(480 / G)), W = G * C, dark = c => c.map(v => Math.round(v * 0.72)), GLOW = [30, 86, 48];
     const palette = [BG, dark(BG), GLOW, dark(GLOW), GREEN, dark(GREEN), MID, dark(MID)];
     // the caption, rasterised once
     const lc = document.createElement('canvas'); lc.width = lc.height = W; const lx = lc.getContext('2d');
