@@ -89,7 +89,7 @@
   let stream = null, facing = 'user', mode = 'idle', modeT = 0, lastBoil = 0, boilSeed = 1, labelDate = '', place = '';
   const labelText = () => (labelDate + ' ' + place).trim();
   const person = new Float32Array(M * M), bgLum = new Float32Array(M * M).fill(-1);
-  let segReady = false, face = null, people = [], hands = [], phones = [], objects = [], mainParse = null, extraFaces = [], logoLines = [], strokesCache = [], hol = null, holReady = null, lastResult = null;
+  let procToken = 0, curToken = 0, warmed = false, segReady = false, face = null, people = [], hands = [], phones = [], objects = [], mainParse = null, extraFaces = [], logoLines = [], strokesCache = [], hol = null, holReady = null, lastResult = null;
 
   // ---------- layout: a centred square ----------
   function resize() {
@@ -132,22 +132,42 @@
   // headphones: an Open Images detector, downloaded once in the background after the person model
   let yolo = null, yoloReady = null, parser = null, parseReady = null;
   function loadScript(src) { return new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = src; sc.crossOrigin = 'anonymous'; sc.onload = ok; sc.onerror = no; document.head.appendChild(sc); }); }
+  // the object and face-part models run in a background worker, so they work at the same time as the person model
+  const WORKER_SRC = `
+    let S = {};
+    onmessage = async e => {
+      const m = e.data;
+      try {
+        if (m.type === 'init') {
+          importScripts(m.ort + 'ort.min.js'); ort.env.wasm.wasmPaths = m.ort; ort.env.wasm.numThreads = 1;
+          S.yolo = await ort.InferenceSession.create(m.yolo, { executionProviders: ['wasm'] }); postMessage({ ready: 'yolo' });
+          S.parse = await ort.InferenceSession.create(m.parse, { executionProviders: ['wasm'] }); postMessage({ ready: 'parse' });
+        } else {
+          const s = S[m.model], r = await s.run({ [s.inputNames[0]]: new ort.Tensor('float32', m.input, m.dims) });
+          const o = r[s.outputNames[0]].data; postMessage({ id: m.id, out: o }, [o.buffer]);
+        }
+      } catch (err) { postMessage({ id: m.id, err: String(err), ready: m.type === 'init' ? 'fail' : undefined }); }
+    };`;
+  let worker = null, rpcId = 0; const pending = new Map();
   function initYolo() {
     if (yoloReady) return;
-    yoloReady = (async () => {
-      await loadScript(ORT_URL + 'ort.min.js');
-      ort.env.wasm.wasmPaths = ORT_URL; ort.env.wasm.numThreads = 1;
-      yolo = await ort.InferenceSession.create(YOLO_URL, { executionProviders: ['wasm'] });
-    })().catch(() => { yolo = null; });
-    parseReady = yoloReady.then(async () => { if (window.ort) parser = await ort.InferenceSession.create(PARSE_URL, { executionProviders: ['wasm'] }); }).catch(() => { parser = null; });
+    let okY, okP; yoloReady = new Promise(r => okY = r); parseReady = new Promise(r => okP = r);
+    try {
+      worker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' })));
+      worker.onmessage = e => { const m = e.data;
+        if (m.ready === 'yolo') { yolo = true; okY(); } else if (m.ready === 'parse') { parser = true; okP(); } else if (m.ready === 'fail') { okY(); okP(); }
+        if (m.id && pending.has(m.id)) { const [res, rej] = pending.get(m.id); pending.delete(m.id); m.err ? rej(new Error(m.err)) : res(m.out); } };
+      worker.onerror = () => { okY(); okP(); };
+      worker.postMessage({ type: 'init', ort: ORT_URL, yolo: new URL(YOLO_URL, location.href).href, parse: new URL(PARSE_URL, location.href).href });
+    } catch (e) { okY(); okP(); }
   }
+  const runModel = (model, input, dims) => new Promise((res, rej) => { const id = ++rpcId; pending.set(id, [res, rej]); worker.postMessage({ id, model, input, dims }, [input.buffer]); });
   async function detectObjects() {
     const S = 640, yc = document.createElement('canvas'); yc.width = yc.height = S;
     const yx = yc.getContext('2d', { willReadFrequently: true }); yx.drawImage(still, 0, 0, S, S);
     const d = yx.getImageData(0, 0, S, S).data, inp = new Float32Array(3 * S * S), A = S * S;
     for (let i = 0, p = 0; i < A; i++, p += 4) { inp[i] = d[p] / 255; inp[A + i] = d[p + 1] / 255; inp[2 * A + i] = d[p + 2] / 255; }
-    const res = await yolo.run({ images: new ort.Tensor('float32', inp, [1, 3, S, S]) });
-    const o = res[yolo.outputNames[0]].data, N = 8400, cand = [], candles = [], faceCand = [];
+    const o = await runModel('yolo', inp, [1, 3, S, S]), N = 8400, cand = [], candles = [], faceCand = [];
     const box = i => { const cx = o[i] / S, cy = o[N + i] / S, w = o[2 * N + i] / S, h = o[3 * N + i] / S;
       const b = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2]; return MIRROR_RESULT ? [1 - b[2], b[1], 1 - b[0], b[3]] : b; };
     const cls = Object.keys(KINDS).map(Number);
@@ -191,8 +211,7 @@
     px.drawImage(stillM, 0, 0); px.restore();
     const d = px.getImageData(0, 0, S, S).data, A = S * S, inp = new Float32Array(3 * A), MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
     for (let i = 0, p = 0; i < A; i++, p += 4) for (let c = 0; c < 3; c++) inp[c * A + i] = (d[p + c] / 255 - MEAN[c]) / STD[c];
-    const res = await parser.run({ [parser.inputNames[0]]: new ort.Tensor('float32', inp, [1, 3, S, S]) });
-    const o = res[parser.outputNames[0]].data, L = new Uint8Array(PN * PN), st = S / PN;
+    const o = await runModel('parse', inp, [1, 3, S, S]), L = new Uint8Array(PN * PN), st = S / PN;
     for (let gy = 0; gy < PN; gy++) for (let gx = 0; gx < PN; gx++) {
       const q = (gy * st + st / 2 | 0) * S + (gx * st + st / 2 | 0); let best = -1e9, bc = 0;
       for (let c = 0; c < 19; c++) { const v = o[c * A + q]; if (v > best) { best = v; bc = c; } }
@@ -328,19 +347,25 @@
     hands = [res.leftHandLandmarks, res.rightHandLandmarks].filter(Boolean).map(h => h.map(U));
   }
 
+  // an empty frame makes the tracker let go, so the next picture is searched from scratch (much cheaper than reset())
+  const blank = document.createElement('canvas'); blank.width = blank.height = 640;   // same size as every other input: a new size costs a slow re-setup
+  async function flushTracking() { const b = blank.getContext('2d'); b.fillStyle = '#777'; b.fillRect(0, 0, 640, 640); await detect(blank); }
+  // the person model takes one picture at a time: calls queue up and never overlap (overlapping calls crash it)
+  let holQ = Promise.resolve();
+  function detect(img) { const p = holQ.then(async () => { lastResult = null; await hol.send({ image: img }); return lastResult; }); holQ = p.catch(() => null); return p; }
   // everyone else in a group: run the face model again on a crop around each extra face
   async function faceInCrop(b) {
-    for (const [f, up] of [[3.6, 0.3], [2.4, 0.45], [5, 0.25]]) { const lm = await faceInCropAt(b, f, up); if (lm) return lm; }
+    for (const [f, up] of [[2.4, 0.45], [3.6, 0.3]]) { const lm = await faceInCropAt(b, f, up); if (window.__dbg) console.error('CROP', f, !!lm); if (lm) return lm; }
     return null;
   }
   async function faceInCropAt(b, f, up) {
-    const w = b[2] - b[0], h = b[3] - b[1], cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, sz = Math.max(w, h) * f, S = 384, W0 = stillM.width;
+    const w = b[2] - b[0], h = b[3] - b[1], cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, sz = Math.max(w, h) * f, S = 640, W0 = stillM.width;
     const x0 = cx - sz / 2, y0 = cy - sz * up;                            // head near the top, shoulders in view: the body finder needs them
     const cc = document.createElement('canvas'); cc.width = cc.height = S; const cx2 = cc.getContext('2d');
     cx2.fillStyle = '#777'; cx2.fillRect(0, 0, S, S); cx2.drawImage(stillM, x0 * W0, y0 * W0, sz * W0, sz * W0, 0, 0, S, S);
     let lm = null;
-    if (hol.reset) hol.reset();                                              // forget the last picture's tracking
-    for (let k = 0; k < 2; k++) { lastResult = null; await hol.send({ image: cc }); if (lastResult && lastResult.faceLandmarks) lm = lastResult.faceLandmarks; }
+    await flushTracking();                                        // forget the last picture's tracking
+    const res = await detect(cc); if (res && res.faceLandmarks) lm = res.faceLandmarks;
     if (!lm) return null;
     const pts = lm.map(p => [x0 + p.x * sz, y0 + p.y * sz]), c = centroid(pts);
     return c[0] > b[0] && c[0] < b[2] && c[1] > b[1] - h * 0.2 && c[1] < b[3] + h * 0.2 ? pts : null;
@@ -354,8 +379,8 @@
     rx.fillStyle = '#777'; rx.fillRect(0, 0, S, S);
     rx.translate(cx, cy); rx.rotate(-roll); rx.translate(-cx, -cy); rx.drawImage(still, 0, 0);
     let best = null;
-    if (hol.reset) hol.reset();
-    for (let k = 0; k < 2; k++) { lastResult = null; await hol.send({ image: rc }); if (lastResult && lastResult.faceLandmarks) best = lastResult.faceLandmarks; }
+    await flushTracking();
+    const res = await detect(rc); if (res && res.faceLandmarks) best = res.faceLandmarks;
     if (!best) return;
     const co = Math.cos(roll), si = Math.sin(roll);
     face = best.map(p => { const x = p.x * S - cx, y = p.y * S - cy; return U({ x: (cx + x * co - y * si) / S, y: (cy + x * si + y * co) / S }); });
@@ -823,12 +848,14 @@
 
   // ---------- flow: countdown -> flash + snapshot -> doodle ----------
   async function begin() {
-    setGrid(96); bar.classList.remove('on'); msg.textContent = ''; recToken++; shareFile = null; shareBtn.disabled = true;
+    procToken++; window.__done = false; setGrid(96); bar.classList.remove('on'); msg.textContent = ''; recToken++; shareFile = null; shareBtn.disabled = true;
     try { await startCam(); } catch (e) { mode = 'error'; msg.textContent = '請允許瀏覽器使用鏡頭'; document.getElementById('retake').textContent = '開啟鏡頭'; document.getElementById('gif').disabled = true; bar.classList.add('on'); return; }
     document.getElementById('retake').textContent = '重拍';
     // wait for the model first: loading it can freeze the page for a moment, and the countdown must stay smooth
     mode = 'loading'; msg.textContent = '準備中…';
     if (holReady) await Promise.race([holReady, new Promise(r => setTimeout(r, 10000))]);
+    // warm-up: the very first picture through the model is slow (setup), so spend it on a live frame now, not after the snapshot
+    if (hol && !warmed) { try { const [sx, sy, sz] = crop(video.videoWidth, video.videoHeight); stillCtx.drawImage(video, sx, sy, sz, sz, 0, 0, still.width, still.height); await detect(still); warmed = true; } catch (e) {} }
     msg.textContent = ''; mode = 'countdown'; modeT = performance.now();
   }
   function snapshot() {
@@ -838,50 +865,60 @@
     const t = new Date(), z = n => String(n).padStart(2, '0');
     labelDate = `${t.getFullYear()}.${z(t.getMonth() + 1)}.${z(t.getDate())}`;
     mode = 'flash'; modeT = performance.now();
-    process();
+    curToken = ++procToken; process();
   }
   async function process() {
-    sampleStill(); face = null; hands = []; segReady = false;
+    const my = curToken, alive = () => my === procToken;
+    const t0 = performance.now(), lap = l => { if (window.__dbg) console.error('T', l, Math.round(performance.now() - t0), 'ms'); };
+    sampleStill(); face = null; people = []; hands = []; segReady = false; phones = []; objects = []; mainParse = null; extraFaces = []; logoLines = [];
+    // the picture as you see it, for parsing and logos
+    stillMCtx.save(); if (MIRROR_RESULT) { stillMCtx.translate(stillM.width, 0); stillMCtx.scale(-1, 1); }
+    stillMCtx.drawImage(still, 0, 0, stillM.width, stillM.height); stillMCtx.restore();
+    // 1) things in the picture: starts now, in the worker, while the person model runs here
+    initYolo();
+    const objectsP = Promise.race([yoloReady, new Promise(r => setTimeout(r, 15000))])
+      .then(() => yolo ? detectObjects() : []).catch(() => []);
+    // 2) the person: outline, face, hands
     if (hol) {
       try {
         await holReady;
         let rawFace = null;
-        for (let k = 0; k < 3; k++) { lastResult = null; await hol.send({ image: still }); if (lastResult) { applyResult(lastResult); if (lastResult.faceLandmarks) rawFace = lastResult.faceLandmarks; } }   // a few passes on the same frame find both hands more reliably
+        for (let k = 0; k < 2; k++) { const res = await detect(still); if (!alive()) return; if (res) { applyResult(res); if (res.faceLandmarks) rawFace = res.faceLandmarks; } }   // two passes find both hands more reliably
         if (rawFace) await straightenFace(rawFace);
+        if (!alive()) return;
       } catch (e) { msg.textContent = '人物偵測失敗，只畫出背景'; }
     } else msg.textContent = '模型沒有載入（請確認網路），只畫出背景';
-    phones = []; objects = [];
-    initYolo();
-    await Promise.race([yoloReady, new Promise(r => setTimeout(r, 12000))]);
-    let faceBoxes = [];
-    if (yolo) { try { const all = await detectObjects(); phones = all.filter(b => b.kind === 'headphones'); faceBoxes = all.filter(b => b.kind === 'face'); objects = all.filter(b => b.kind !== 'headphones' && b.kind !== 'face'); } catch (e) {} }
-    // the picture as you see it, for parsing and logos
-    stillMCtx.save(); if (MIRROR_RESULT) { stillMCtx.translate(stillM.width, 0); stillMCtx.scale(-1, 1); }
-    stillMCtx.drawImage(still, 0, 0, stillM.width, stillM.height); stillMCtx.restore();
-    mainParse = null; extraFaces = [];
-    await Promise.race([parseReady, new Promise(r => setTimeout(r, 8000))]);
+    lap('person');
     let mainBox = null;
     if (face) { const xs = face.map(q => q[0]), ys = face.map(q => q[1]); mainBox = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; }
+    people = face ? [{ lm: face, P: null }] : [];
+    // first drawing on screen right away; the details are added when they arrive
+    showResult(true);
+    const mainParseP = mainBox ? Promise.race([parseReady, new Promise(r => setTimeout(r, 15000))]).then(() => parser ? parseFace(mainBox, lmRoll(face)) : null).catch(() => null) : Promise.resolve(null);
+    const all = await objectsP; lap('objects'); if (!alive()) return;
+    phones = all.filter(b => b.kind === 'headphones'); objects = all.filter(b => b.kind !== 'headphones' && b.kind !== 'face');
+    const faceBoxes = all.filter(b => b.kind === 'face');
     const others = faceBoxes.filter(b => b[2] - b[0] >= 0.045 && (b.score >= 0.5 || b[2] - b[0] >= 0.08)).filter(b => { const c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
       return !(mainBox && c[0] > mainBox[0] - 0.02 && c[0] < mainBox[2] + 0.02 && c[1] > mainBox[1] - 0.04 && c[1] < mainBox[3] + 0.02); }).slice(0, 5);
-    if (parser) {
-      try {
-        if (mainBox) mainParse = await parseFace(mainBox, lmRoll(face));
-      } catch (e) { mainParse = null; }
-    }
-    people = face ? [{ lm: face, P: mainParse }] : [];
+    // everyone else: their face points are found here, and each face parse runs in the worker at the same time
+    const extraJobs = [];
     for (const b of others) {
-      let lm = null, P = null;
-      try { lm = await faceInCrop(b); } catch (e) {}
-      try { if (parser) P = await parseFace(b, lm ? lmRoll(lm) : 0); } catch (e) {}
+      let lm = null; try { if (hol) lm = await faceInCrop(b); } catch (e) {}
+      if (!alive()) return;
+      extraJobs.push((parser ? parseFace(b, lm ? lmRoll(lm) : 0) : Promise.resolve(null)).catch(() => null).then(P => ({ lm, P })));
+    }
+    lap('extra faces');
+    mainParse = await mainParseP; if (!alive()) return;
+    if (people[0]) people[0].P = mainParse;
+    for (const { lm, P } of await Promise.all(extraJobs)) {
       if (lm) people.push({ lm, P });
       else if (P) { const f = parsedFace(P); if (f) extraFaces.push(f); }
     }
+    lap('parse'); if (!alive()) return;
     const avoid = []; if (mainBox) avoid.push([[(mainBox[0] + mainBox[2]) / 2, (mainBox[1] + mainBox[3]) / 2], (mainBox[2] - mainBox[0]) * 0.75]);
     for (const f of extraFaces) avoid.push([f.c, f.r * 1.3]);
     for (const p of people.slice(1)) { const xs = p.lm.map(q => q[0]), ys = p.lm.map(q => q[1]); avoid.push([[(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2], (Math.max(...xs) - Math.min(...xs)) * 0.75]); }
     logoLines = findLogos(avoid);
-    if (window.__dbg) console.error('DBG', JSON.stringify({ face: !!face, main: !!mainParse, fb: faceBoxes.map(b => b.map(v => +v.toFixed(2)).concat(+b.score.toFixed(2))), others: others.length, hands: hands.length, people: people.length, extra: extraFaces.length, logos: logoLines.length, objects: objects.map(o => o.kind) }));
     const nFaces = people.length + extraFaces.length;
     const fw = [mainBox ? mainBox[2] - mainBox[0] : 1].concat(others.map(b => b[2] - b[0])), small = nFaces >= 2 && Math.min(...fw) < 0.11;
     setGrid(Math.max(nFaces > 4 || small ? 160 : nFaces > 2 ? 128 : 96, logoLines.length >= 6 ? 128 : 96));
@@ -889,11 +926,24 @@
       const xs = face.map(q => q[0]), ys = face.map(q => q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), w = x1 - x0;
       phones = [window.__testPhones === 'over' ? [x0 - w * 0.35, y0 - w * 0.3, x1 + w * 0.35, (y0 + y1) / 2 + w * 0.2] : [x0, y0 + w * 0.3, x1, y1 + w * 0.2]];
     }
-    strokesCache = buildStrokes();
-    if (window.__dbg) window.__strokes = { strokes: strokesCache, people: people.length, extra: extraFaces.map(f => [f.c, f.r]), logos: logoLines.length };
-    const wait = Math.max(0, 520 - (performance.now() - modeT));             // let the flash finish
-    setTimeout(() => { mode = 'result'; lastBoil = 0; bar.classList.add('on'); document.getElementById('gif').disabled = false; setTimeout(prepareShare, 150); }, wait);
+    if (window.__dbg) console.error('DBG', JSON.stringify({ face: !!face, main: !!mainParse, others: others.length, hands: hands.length, people: people.length, extra: extraFaces.length, logos: logoLines.length, objects: objects.map(o => o.kind) }));
+    showResult(false); lap('done');
   }
+  // draw what we know so far; `early` = first quick version, details still coming
+  function showResult(early) {
+    if (procToken !== curToken) return;
+    strokesCache = buildStrokes();
+    if (window.__dbg && !early) window.__strokes = { strokes: strokesCache, people: people.length, extra: extraFaces.map(f => [f.c, f.r]), logos: logoLines.length };
+    const gifBtn = document.getElementById('gif');
+    if (early) {
+      const wait = Math.max(0, 520 - (performance.now() - modeT));           // let the flash finish
+      setTimeout(() => { if (procToken !== curToken) return; mode = 'result'; lastBoil = 0; bar.classList.add('on'); gifBtn.disabled = true; msg.textContent = '加上細節中…'; }, wait);
+    } else {
+      const go = () => { if (procToken !== curToken) return; if (mode !== 'result') { mode = 'result'; bar.classList.add('on'); } lastBoil = 0; gifBtn.disabled = false; msg.textContent = ''; window.__done = true; setTimeout(prepareShare, 150); };
+      if (mode === 'result') go(); else setTimeout(go, Math.max(0, 560 - (performance.now() - modeT)));
+    }
+  }
+
 
   // ---------- render ----------
   function compose() {
