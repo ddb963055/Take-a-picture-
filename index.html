@@ -224,7 +224,7 @@
     }
     // regions where a detailed doodle replaces the silhouette outline: the face and each hand
     const holes = [];
-    let faceStrokes = [], handStrokes = [];
+    let faceStrokes = [], handStrokes = [], stickerStrokes = [], faceInfo = null;
     if (face) {
       // a small face is enlarged around its centre (kids draw big heads), so the features stay readable
       const c0 = centroid(FACE_OVAL.map(i => face[i]));
@@ -236,12 +236,12 @@
       holes.push([c, r * 1.12]);
       // head: the real face outline, simplified to a lumpy childlike shape
       faceStrokes.push({ pts: closeLoop(simplifyClosed(oval, r * 0.09)), w: 1.15 });
-      const fw = r * 2;
+      const fw = r * 2, eyeOpen = [];
       // eyes: size and openness come from the eyelids; closed eyes become a short line
       for (const [up, low, corners] of EYES) {
         const a = F[corners[0]], b = F[corners[1]], w = Math.hypot(a[0] - b[0], a[1] - b[1]);
         const open = Math.hypot(F[up][0] - F[low][0], F[up][1] - F[low][1]) / (w || 1);
-        const ec = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        const ec = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; eyeOpen.push(open);
         if (open < 0.16) faceStrokes.push({ pts: [a, b], w: 0.75 });
         else faceStrokes.push({ dot: ec, r: Math.max(fw * 0.035, w * (0.16 + open * 0.35)) });
       }
@@ -255,6 +255,12 @@
       const gap = Math.hypot(F[13][0] - F[14][0], F[13][1] - F[14][1]) / (mw || 1);
       if (gap > 0.18) faceStrokes.push({ pts: closeLoop(simplifyClosed(pick(LIPS_INNER), mw * 0.08)), w: 0.95 });
       else faceStrokes.push({ pts: simplify(pick(MOUTH_LINE), mw * 0.05), w: 0.95 });
+      // expression stickers: big open mouth -> WOW!, smile -> heart, both eyes shut -> Zzz
+      const smile = ((F[13][1] + F[14][1]) / 2 - (F[61][1] + F[291][1]) / 2) / (mw || 1);
+      faceInfo = { c, r };
+      if (gap > 0.3) stickerStrokes.push(...stickerWow(c, r));
+      else if (eyeOpen.length === 2 && eyeOpen[0] < 0.17 && eyeOpen[1] < 0.17) stickerStrokes.push(...stickerZzz(c, r));
+      if (smile > 0.1 && mw / fw > 0.36 && gap <= 0.3) stickerStrokes.push(...stickerHeart(c, r));
       // ears: a little bump just outside each side of the face
       for (const [ei, dir] of [[234, -1], [454, 1]]) {
         const e = F[ei], out = [e[0] - c[0], e[1] - c[1]], L = Math.hypot(out[0], out[1]) || 1;
@@ -275,8 +281,17 @@
       handStrokes.push({ pts: closeLoop(simplifyClosed(palm, hr * 0.08)), w: 1.0 });
       // fingers: only the straight ones are drawn, as stick lines (so a V sign shows two fingers)
       const wr = h[0], dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-      for (const [mcp, pip, tipI] of FINGERS) {
-        if (dist(h[tipI], wr) > dist(h[pip], wr) * 1.12) handStrokes.push({ pts: [h[mcp], h[pip], h[tipI]], w: 0.85 });
+      const ext = FINGERS.map(([mcp, pip, tipI]) => dist(h[tipI], wr) > dist(h[pip], wr) * 1.12);
+      FINGERS.forEach(([mcp, pip, tipI], j) => { if (ext[j]) handStrokes.push({ pts: [h[mcp], h[pip], h[tipI]], w: 0.85 }); });
+      // gestures: thumb+index ring next to the face -> goggle circle; V sign -> sparkles at the fingertips
+      const pinch = dist(h[4], h[8]) < dist(h[5], h[0]) * 0.45;
+      const nearFace = faceInfo && dist(hc, faceInfo.c) < faceInfo.r * 2.4;
+      if (pinch && nearFace) {
+        const m = [(h[4][0] + h[8][0]) / 2, (h[4][1] + h[8][1]) / 2], rr = Math.max(0.03, dist(h[5], h[0]) * 0.32);
+        stickerStrokes.push({ pts: closeLoop(arc(m[0], m[1], rr, 0, 330, 14)), w: 0.95 });
+      } else if (ext[1] && ext[2] && !ext[3] && !ext[4]) {
+        const s0 = Math.max(0.022, hr * 0.22);
+        stickerStrokes.push(...sparkle(h[8][0] - s0 * 0.9, h[8][1] - s0 * 1.4, s0), ...sparkle(h[12][0] + s0 * 1.1, h[12][1] - s0 * 1.5, s0 * 0.75));
       }
     }
     // person: one wobbly outline of the silhouette, with the face and hands cut out for their own doodles
@@ -292,8 +307,22 @@
         if (cur.length > 2) strokes.push({ pts: cur, w: 1.15 });
       }
     }
-    strokes.push(...faceStrokes, ...handStrokes);
-    return strokes;
+    // stickers get a clean patch: background and outline lines are cut where a sticker sits
+    const boxes = [];
+    for (const st of stickerStrokes) {
+      const ps = st.dot ? [st.dot] : st.pts, xs = ps.map(q => q[0]), ys = ps.map(q => q[1]);
+      boxes.push([Math.min(...xs) - 0.025, Math.min(...ys) - 0.025, Math.max(...xs) + 0.025, Math.max(...ys) + 0.025]);
+    }
+    const inBox = q => boxes.some(b => q[0] > b[0] && q[0] < b[2] && q[1] > b[1] && q[1] < b[3]);
+    const kept = [];
+    for (const st of strokes) {
+      if (!boxes.length || st.dot) { kept.push(st); continue; }
+      let cur = [];
+      for (const q of resample(st.pts, 0.008)) { if (inBox(q)) { if (cur.length > 1) kept.push({ pts: cur, w: st.w }); cur = []; } else cur.push(q); }
+      if (cur.length > 1) kept.push({ pts: cur, w: st.w });
+    }
+    kept.push(...faceStrokes, ...handStrokes, ...stickerStrokes);
+    return kept;
   }
   // MediaPipe face-mesh indices
   const FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
@@ -310,6 +339,56 @@
     for (let i = 1; i < p.length; i++) { const a = p[i - 1], b = p[i], d = Math.hypot(b[0] - a[0], b[1] - a[1]), k = Math.max(1, Math.round(d / step));
       for (let t = 1; t <= k; t++) out.push([a[0] + (b[0] - a[0]) * t / k, a[1] + (b[1] - a[1]) * t / k]); }
     return out;
+  }
+
+  // ---------- stickers, drawn as strokes so they wobble with everything else ----------
+  const clampU = v => Math.min(0.95, Math.max(0.05, v));
+  // place a box of size (w,h) beside the face on the side with more room, above eye level
+  function besideFace(c, r, w, h, flip) {
+    const right = (c[0] < 0.5) !== !!flip;
+    let x = right ? c[0] + r * 0.95 : c[0] - r * 0.95 - w, y = c[1] - r * 1.15 - h * 0.3;
+    x = Math.min(0.95 - w, Math.max(0.05, x)); y = Math.min(0.95 - h, Math.max(0.05, y));
+    return [x, y];
+  }
+  const LETTERS = {
+    W: [[[0, 0], [0.18, 1], [0.35, 0.35], [0.52, 1], [0.7, 0]]],
+    O: [closeLoop(arc(0.32, 0.5, 0.5, 0, 345, 12)).map(([x, y]) => [x * 0.95, 0.5 + (y - 0.5)])],
+    '!': [[[0.1, 0], [0.1, 0.62]], 'dot'],
+    Z: [[[0, 0], [0.6, 0], [0, 1], [0.62, 1]]],
+  };
+  function word(text, x, y, h, gap = 0.22) {
+    const out = []; let cx = x;
+    for (const ch of text) {
+      const L = LETTERS[ch], wd = ch === '!' ? 0.2 : ch === 'O' ? 0.62 : ch === 'W' ? 0.7 : 0.62;
+      for (const part of L) {
+        if (part === 'dot') out.push({ dot: [cx + 0.1 * h, y + 0.92 * h], r: h * 0.07 });
+        else out.push({ pts: part.map(([px, py]) => [cx + px * h, y + py * h]), w: 0.85 });
+      }
+      cx += (wd + gap) * h;
+    }
+    return out;
+  }
+  function stickerWow(c, r) {
+    const h = Math.min(0.12, Math.max(0.075, r * 0.5)), w = h * (0.7 + 0.62 + 0.7 + 0.2 + 0.66);
+    const [x, y] = besideFace(c, r, w, h); return word('WOW!', x, y, h);
+  }
+  function stickerZzz(c, r) {
+    const h = Math.min(0.1, Math.max(0.06, r * 0.4)), out = [];
+    const [x, y] = besideFace(c, r, h * 2.4, h * 1.9);
+    out.push(...word('Z', x, y + h * 1.0, h * 0.55), ...word('Z', x + h * 0.6, y + h * 0.45, h * 0.75), ...word('Z', x + h * 1.4, y, h));
+    return out;
+  }
+  function stickerHeart(c, r) {
+    const s = Math.min(0.14, Math.max(0.1, r * 0.6));
+    const [x, y] = besideFace(c, r, s, s, true), cx = x + s / 2, cy = y + s / 2, pts = [];
+    for (let i = 0; i <= 24; i++) { const t = i / 24 * Math.PI * 2;
+      pts.push([cx + s * 0.5 * Math.pow(Math.sin(t), 3), cy - s * 0.5 * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16]); }
+    return [{ pts, w: 0.95 }];
+  }
+  function sparkle(x, y, s) {
+    x = clampU(x); y = clampU(y);
+    return [{ pts: [[x, y - s], [x, y + s]], w: 0.8 }, { pts: [[x - s, y], [x + s, y]], w: 0.8 },
+            { pts: [[x - s * 0.4, y - s * 0.4], [x + s * 0.4, y + s * 0.4]], w: 0.6 }, { pts: [[x - s * 0.4, y + s * 0.4], [x + s * 0.4, y - s * 0.4]], w: 0.6 }];
   }
 
   // ---------- draw strokes with a shaky hand, then snap to the pixel grid ----------
