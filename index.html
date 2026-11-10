@@ -17,13 +17,13 @@
   html,body{height:100%;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:none;background:var(--bg);overflow:hidden;
     font-family:"Helvetica Neue",Helvetica,"PingFang TC","Noto Sans TC",system-ui,sans-serif;
     color:var(--ink);-webkit-font-smoothing:antialiased;touch-action:manipulation}
-  canvas#stage{position:fixed;left:50%;top:50%;transform:translate(-50%,-52%);display:block;outline:1px solid rgba(92,255,122,.18);
+  canvas#stage{position:fixed;left:50%;top:50%;transform:translate(-50%,-52%);display:block;
     image-rendering:pixelated}
   video{position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
   .title{position:fixed;left:calc(22px + env(safe-area-inset-left));top:calc(20px + env(safe-area-inset-top));pointer-events:none;line-height:1.6}
   .title b{display:block;font-weight:400;font-size:11px;letter-spacing:.32em}
   .title span{display:block;font-weight:300;font-size:10px;letter-spacing:.14em;color:var(--dim)}
-  .bar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(30px + env(safe-area-inset-bottom));display:flex;gap:14px;
+  .bar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(30px + env(safe-area-inset-bottom));display:flex;gap:10px;
     opacity:0;pointer-events:none;transition:opacity .4s}
   .bar.on{opacity:1;pointer-events:auto}
   .pill{all:unset;cursor:pointer;white-space:nowrap;text-align:center;min-width:64px;border:1px solid var(--ink);border-radius:999px;padding:12px 22px;font-size:11px;letter-spacing:.24em;
@@ -33,16 +33,16 @@
   .pill[disabled]{opacity:.45;pointer-events:none}
   .msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom));font-size:10px;letter-spacing:.2em;
     color:var(--dim);white-space:nowrap}
-  @media (pointer:coarse){ .pill{padding:15px 26px} }
+  @media (pointer:coarse){ .pill{padding:15px 22px} }
 </style>
 </head>
 <body>
 <canvas id="stage"></canvas>
 <video id="cam" playsinline muted autoplay></video>
-<div class="title"><b>AFTERIMAGE</b><span>doodle snapshot — study 09</span></div>
 <div class="msg" id="msg"></div>
 <div class="bar" id="bar">
   <button class="pill" id="retake">重拍</button>
+  <button class="pill" id="share" disabled>分享</button>
   <button class="pill solid" id="gif">下載 GIF</button>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/holistic.js" crossorigin="anonymous"></script>
@@ -57,7 +57,9 @@
   const MAX_BG_LINES = 12;   // keep only the longest background lines: a 5-year-old draws the big things
   const COUNT_FROM = 3;      // seconds of countdown before the snapshot
   const GIF_FRAMES = 10;     // frames in the downloaded GIF (one boil cycle each)
-  const GREEN = [92, 255, 122], BG = [10, 20, 15], FLASH = [226, 255, 232];
+  const GREEN = [92, 255, 122], BG = [10, 20, 15], FLASH = [226, 255, 232], MID = [44, 150, 74];   // MID: the pixel frame
+  const CLOSED_EYE = 0.21;   // eyelid gap / eye width below this = eye closed
+  const YOLO_URL = 'models/yolov8s-oiv7-fp16.onnx', ORT_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/', HEADPHONES = 244;
 
   const stage = document.getElementById('stage');
   const ctx = stage.getContext('2d');
@@ -73,13 +75,14 @@
   const viewCtx = viewS.getContext('2d', { willReadFrequently: true });
   const maskCv = document.createElement('canvas'); maskCv.width = maskCv.height = M;
   const mctx = maskCv.getContext('2d', { willReadFrequently: true });
-  const still = document.createElement('canvas'); still.width = still.height = 384;     // the frozen moment, square
+  const still = document.createElement('canvas'); still.width = still.height = 640;     // the frozen moment, square
   const stillCtx = still.getContext('2d', { willReadFrequently: true });
   const scan = document.createElement('canvas');
 
-  let stream = null, facing = 'user', mode = 'idle', modeT = 0, lastBoil = 0, boilSeed = 1, label = '';
+  let stream = null, facing = 'user', mode = 'idle', modeT = 0, lastBoil = 0, boilSeed = 1, labelDate = '', place = '';
+  const labelText = () => (labelDate + ' ' + place).trim();
   const person = new Float32Array(M * M), bgLum = new Float32Array(M * M).fill(-1);
-  let segReady = false, face = null, hands = [], strokesCache = [], hol = null, holReady = null, lastResult = null;
+  let segReady = false, face = null, hands = [], phones = [], strokesCache = [], hol = null, holReady = null, lastResult = null;
 
   // ---------- layout: a centred square ----------
   function resize() {
@@ -115,9 +118,41 @@
         refineFaceLandmarks: false, minDetectionConfidence: 0.4, minTrackingConfidence: 0.4 });
       hol.onResults(res => { lastResult = res; });
       holReady = hol.initialize ? hol.initialize().catch(() => {}) : Promise.resolve();   // download while you pose
+      holReady.then(initYolo);
     } catch (e) { hol = null; }
   }
   initModel();
+  // headphones: an Open Images detector, downloaded once in the background after the person model
+  let yolo = null, yoloReady = null;
+  function loadScript(src) { return new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = src; sc.crossOrigin = 'anonymous'; sc.onload = ok; sc.onerror = no; document.head.appendChild(sc); }); }
+  function initYolo() {
+    if (yoloReady) return;
+    yoloReady = (async () => {
+      await loadScript(ORT_URL + 'ort.min.js');
+      ort.env.wasm.wasmPaths = ORT_URL; ort.env.wasm.numThreads = 1;
+      yolo = await ort.InferenceSession.create(YOLO_URL, { executionProviders: ['wasm'] });
+    })().catch(() => { yolo = null; });
+  }
+  async function detectHeadphones() {
+    const S = 640, yc = document.createElement('canvas'); yc.width = yc.height = S;
+    const yx = yc.getContext('2d', { willReadFrequently: true }); yx.drawImage(still, 0, 0, S, S);
+    const d = yx.getImageData(0, 0, S, S).data, inp = new Float32Array(3 * S * S), A = S * S;
+    for (let i = 0, p = 0; i < A; i++, p += 4) { inp[i] = d[p] / 255; inp[A + i] = d[p + 1] / 255; inp[2 * A + i] = d[p + 2] / 255; }
+    const res = await yolo.run({ images: new ort.Tensor('float32', inp, [1, 3, S, S]) });
+    const o = res[yolo.outputNames[0]].data, N = 8400, cand = [];
+    for (let i = 0; i < N; i++) {
+      const sc = o[(4 + HEADPHONES) * N + i]; if (sc < 0.25) continue;
+      const cx = o[i] / S, cy = o[N + i] / S, w = o[2 * N + i] / S, h = o[3 * N + i] / S;
+      let b = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
+      if (facing === 'user') b = [1 - b[2], b[1], 1 - b[0], b[3]];
+      b.score = sc; cand.push(b);
+    }
+    cand.sort((a, b) => b.score - a.score);
+    const iou = (a, b) => { const iw = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])), ih = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1])), I = iw * ih;
+      return I / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - I); };
+    const keep = []; for (const b of cand) if (keep.every(k => iou(k, b) < 0.45)) keep.push(b);
+    return keep.slice(0, 4);
+  }
   function applyResult(res) {
     const m = res.segmentationMask;
     segReady = false; person.fill(0);
@@ -242,7 +277,7 @@
         const a = F[corners[0]], b = F[corners[1]], w = Math.hypot(a[0] - b[0], a[1] - b[1]);
         const open = Math.hypot(F[up][0] - F[low][0], F[up][1] - F[low][1]) / (w || 1);
         const ec = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; eyeOpen.push(open);
-        if (open < 0.16) faceStrokes.push({ pts: [a, b], w: 0.75 });
+        if (open < CLOSED_EYE) faceStrokes.push({ pts: [a, b], w: 0.75 });
         else faceStrokes.push({ dot: ec, r: Math.max(fw * 0.035, w * (0.16 + open * 0.35)) });
       }
       // brows: five points each, reduced to a three-point line that follows the expression
@@ -259,16 +294,21 @@
       const smile = ((F[13][1] + F[14][1]) / 2 - (F[61][1] + F[291][1]) / 2) / (mw || 1);
       faceInfo = { c, r };
       if (gap > 0.3) stickerStrokes.push(...stickerWow(c, r));
-      else if (eyeOpen.length === 2 && eyeOpen[0] < 0.17 && eyeOpen[1] < 0.17) stickerStrokes.push(...stickerZzz(c, r));
+      else if (eyeOpen.length === 2 && eyeOpen[0] < CLOSED_EYE && eyeOpen[1] < CLOSED_EYE) stickerStrokes.push(...stickerZzz(c, r));
       if (smile > 0.1 && mw / fw > 0.36 && gap <= 0.3) stickerStrokes.push(...stickerHeart(c, r));
-      // ears: a little bump just outside each side of the face
-      for (const [ei, dir] of [[234, -1], [454, 1]]) {
+      // headphones on this head? over-ear = wider than the face, otherwise wired earbuds
+      const T = q => [c0[0] + (q[0] - c0[0]) * k, c0[1] + (q[1] - c0[1]) * k];
+      const ph = phones.find(b => { const bc = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]; return Math.hypot(bc[0] - c0[0], bc[1] - c0[1]) < r0 * 1.8; });
+      if (ph) { ph.used = true; stickerStrokes.push(...(ph[2] - ph[0] > r0 * 2.3 ? headphonesOver(F, c, r, T([0, ph[1]])[1]) : earbuds(F, c, r))); }
+      // ears: a little bump just outside each side of the face (hidden under over-ear headphones)
+      if (!ph || ph[2] - ph[0] <= r0 * 2.3) for (const [ei, dir] of [[234, -1], [454, 1]]) {
         const e = F[ei], out = [e[0] - c[0], e[1] - c[1]], L = Math.hypot(out[0], out[1]) || 1;
         const ex = e[0] + out[0] / L * r * 0.12, ey = e[1] + out[1] / L * r * 0.12;
         const a0 = Math.atan2(out[1], out[0]) * 180 / Math.PI;
         faceStrokes.push({ pts: arc(ex, ey, r * 0.16, a0 - 80, a0 + 80, 8), w: 0.8 });
       }
     }
+    for (const b of phones) if (!b.used) stickerStrokes.push(...headphonesBox(b));   // headphones not on a detected face
     for (const h0 of hands) {
       const xs = h0.map(p => p[0]), ys = h0.map(p => p[1]);
       const hc = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
@@ -385,6 +425,46 @@
       pts.push([cx + s * 0.5 * Math.pow(Math.sin(t), 3), cy - s * 0.5 * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16]); }
     return [{ pts, w: 0.95 }];
   }
+  // over-ear headphones: two cups on the ears and a band over the head
+  function headphonesOver(F, c, r, boxTop) {
+    const out = [], cups = [];
+    for (const ei of [234, 454]) {
+      const e = F[ei], dx = e[0] - c[0], L = Math.abs(dx) || 1, cx = e[0] + dx / L * r * 0.1, cy = e[1];
+      cups.push([cx, cy]);
+      for (const [rx, ry, w] of [[0.27, 0.4, 1.2], [0.12, 0.22, 0.9]]) {               // cup + cushion
+        const pts = []; for (let i = 0; i <= 16; i++) { const a = i / 16 * Math.PI * 2; pts.push([cx + Math.cos(a) * r * rx, cy + Math.sin(a) * r * ry]); }
+        out.push({ pts, w });
+      }
+    }
+    const top = Math.max(0.03, Math.min(F[10][1] - r * 0.5, boxTop + r * 0.05));
+    const [a, b] = cups.sort((p, q) => p[0] - q[0]);
+    for (const off of [0, 0.12]) {                                                  // a thick band: two parallel arcs
+      const band = [], base = Math.min(a[1], b[1]) - r * 0.4;
+      for (let i = 0; i <= 18; i++) { const ang = Math.PI * (1 - i / 18);
+        band.push([(a[0] + b[0]) / 2 + Math.cos(ang) * ((b[0] - a[0]) / 2 - r * off), base - Math.sin(ang) * (base - top - r * off)]); }
+      out.push({ pts: band, w: 1.1 });
+    }
+    return out;
+  }
+  // wired earbuds: a small bud in each ear, wires meeting under the chin, one cable down
+  function earbuds(F, c, r) {
+    const chin = F[152], j = [chin[0], Math.min(0.95, chin[1] + r * 0.4)], out = [];
+    for (const ei of [234, 454]) {
+      const e = F[ei], dx = e[0] - c[0], L = Math.abs(dx) || 1, bx = e[0] + dx / L * r * 0.04, by = e[1] + r * 0.08;
+      out.push({ dot: [bx, by], r: r * 0.09 });
+      out.push({ pts: [[bx, by], [bx + (j[0] - bx) * 0.15, by + (j[1] - by) * 0.55], j], w: 0.8 });
+    }
+    out.push({ pts: [j, [j[0] + r * 0.06, Math.min(0.97, j[1] + r * 0.4)], [j[0] - r * 0.02, Math.min(0.98, j[1] + r * 0.8)]], w: 0.8 });
+    return out;
+  }
+  // headphones on their own (a desk, a neck): a simple icon in the box
+  function headphonesBox(b) {
+    const [x0, y0, x1, y1] = b, w = x1 - x0, h = y1 - y0, cr = Math.min(w, h) * 0.22, band = [];
+    for (let i = 0; i <= 14; i++) { const ang = Math.PI * (1 - i / 14); band.push([(x0 + x1) / 2 + Math.cos(ang) * (w / 2 - cr), y1 - cr * 1.6 - Math.sin(ang) * (h - cr * 2.2)]); }
+    const out = [{ pts: band, w: 1.0 }];
+    for (const cx of [x0 + cr, x1 - cr]) out.push({ pts: closeLoop(arc(cx, y1 - cr * 1.1, cr, 0, 345, 10)), w: 1.0 });
+    return out;
+  }
   function sparkle(x, y, s) {
     x = clampU(x); y = clampU(y);
     return [{ pts: [[x, y - s], [x, y + s]], w: 0.8 }, { pts: [[x - s, y], [x + s, y]], w: 0.8 },
@@ -461,7 +541,7 @@
 
   // ---------- flow: countdown -> flash + snapshot -> doodle ----------
   async function begin() {
-    bar.classList.remove('on'); msg.textContent = '';
+    bar.classList.remove('on'); msg.textContent = ''; recToken++; shareFile = null; shareBtn.disabled = true;
     try { await startCam(); } catch (e) { mode = 'error'; msg.textContent = '請允許瀏覽器使用鏡頭'; document.getElementById('retake').textContent = '開啟鏡頭'; document.getElementById('gif').disabled = true; bar.classList.add('on'); return; }
     document.getElementById('retake').textContent = '重拍';
     // wait for the model first: loading it can freeze the page for a moment, and the countdown must stay smooth
@@ -474,7 +554,7 @@
     stillCtx.drawImage(video, sx, sy, s, s, 0, 0, still.width, still.height);
     stopCam();                                                           // camera off: nothing runs while you look at the doodle
     const t = new Date(), z = n => String(n).padStart(2, '0');
-    label = `AFTERIMAGE · ${t.getFullYear()}.${z(t.getMonth() + 1)}.${z(t.getDate())}`;
+    labelDate = `${t.getFullYear()}.${z(t.getMonth() + 1)}.${z(t.getDate())}`;
     mode = 'flash'; modeT = performance.now();
     process();
   }
@@ -486,9 +566,17 @@
         for (let k = 0; k < 3; k++) { lastResult = null; await hol.send({ image: still }); if (lastResult) applyResult(lastResult); }   // a few passes on the same frame find both hands more reliably
       } catch (e) { msg.textContent = '人物偵測失敗，只畫出背景'; }
     } else msg.textContent = '模型沒有載入（請確認網路），只畫出背景';
+    phones = [];
+    initYolo();
+    await Promise.race([yoloReady, new Promise(r => setTimeout(r, 12000))]);
+    if (yolo) { try { phones = await detectHeadphones(); } catch (e) { phones = []; } }
+    if (window.__testPhones && face) {                                     // preview hook: pretend headphones were found
+      const xs = face.map(q => q[0]), ys = face.map(q => q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), w = x1 - x0;
+      phones = [window.__testPhones === 'over' ? [x0 - w * 0.35, y0 - w * 0.3, x1 + w * 0.35, (y0 + y1) / 2 + w * 0.2] : [x0, y0 + w * 0.3, x1, y1 + w * 0.2]];
+    }
     strokesCache = buildStrokes();
     const wait = Math.max(0, 520 - (performance.now() - modeT));             // let the flash finish
-    setTimeout(() => { mode = 'result'; lastBoil = 0; bar.classList.add('on'); document.getElementById('gif').disabled = false; }, wait);
+    setTimeout(() => { mode = 'result'; lastBoil = 0; bar.classList.add('on'); document.getElementById('gif').disabled = false; setTimeout(prepareShare, 150); }, wait);
   }
 
   // ---------- render ----------
@@ -499,8 +587,12 @@
     const g = W / G * 0.9; ctx.drawImage(cellsCv, -g, -g, W + 2 * g, W + 2 * g); ctx.drawImage(cellsCv, g, g, W - 2 * g, W - 2 * g);
     ctx.globalAlpha = 1; ctx.imageSmoothingEnabled = false; ctx.globalCompositeOperation = 'lighten';
     ctx.drawImage(cellsCv, 0, 0, W, W); ctx.globalCompositeOperation = 'source-over';
+    // the pixel frame: one ring of mid-green cells
+    const cw = W / G; ctx.fillStyle = `rgb(${MID.join(',')})`;
+    ctx.fillRect(0, 0, W, cw); ctx.fillRect(0, W - cw, W, cw); ctx.fillRect(0, 0, cw, W); ctx.fillRect(W - cw, 0, cw, W);
     ctx.drawImage(scan, 0, 0);
-    if (mode === 'result' && label) {
+    if (mode === 'result' && labelDate) {
+      const label = labelText();
       const dpr = W / parseFloat(stage.style.width);
       ctx.font = `300 ${9 * dpr}px "Helvetica Neue", Helvetica, sans-serif`; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
       if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${1.5 * dpr}px`;
@@ -573,13 +665,17 @@
   async function makeGif() {
     const btn = document.getElementById('gif'); btn.disabled = true; btn.textContent = '產生中…';
     await new Promise(r => setTimeout(r, 30));
+    await saveBlob(gifBlob(), `doodle-cam-${stamp()}.gif`);
+    btn.disabled = false; btn.textContent = '下載 GIF';
+  }
+  function gifBlob() {
     const C = 5, W = G * C, dark = c => c.map(v => Math.round(v * 0.72)), GLOW = [30, 86, 48];
-    const palette = [BG, dark(BG), GLOW, dark(GLOW), GREEN, dark(GREEN), [0, 0, 0], [255, 255, 255]];
+    const palette = [BG, dark(BG), GLOW, dark(GLOW), GREEN, dark(GREEN), MID, dark(MID)];
     // the caption, rasterised once
     const lc = document.createElement('canvas'); lc.width = lc.height = W; const lx = lc.getContext('2d');
     lx.font = '600 11px "Helvetica Neue", Helvetica, sans-serif'; lx.textAlign = 'right'; lx.textBaseline = 'bottom';
     if (lx.letterSpacing !== undefined) lx.letterSpacing = '1.5px';
-    const tw = lx.measureText(label).width; lx.fillStyle = '#f00'; lx.fillRect(W - 20 - tw, W - 24, tw + 14, 19); lx.fillStyle = '#0f0'; lx.fillText(label, W - 12, W - 9);
+    const label = labelText(), tw = lx.measureText(label).width; lx.fillStyle = '#f00'; lx.fillRect(W - 20 - tw, W - 24, tw + 14, 19); lx.fillStyle = '#0f0'; lx.fillText(label, W - 12, W - 9);
     const ld = lx.getImageData(0, 0, W, W).data;
     const frames = [], seed0 = boilSeed;
     for (let f = 0; f < GIF_FRAMES; f++) {
@@ -593,15 +689,52 @@
         else { let nb = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const X = gx + dx, Y = gy + dy; if (X >= 0 && Y >= 0 && X < G && Y < G && on[Y * G + X]) nb = 1; } c = nb ? 2 : 0; }
         const q = (y * W + x) * 4;
         if (ld[q + 3] > 60) c = ld[q + 1] > ld[q] ? 4 : 0;                // caption plate + text
+        if (gx === 0 || gy === 0 || gx === G - 1 || gy === G - 1) c = 6;    // pixel frame
         if (y % 3 === 1) c += 1;                                            // scanline
         idx[y * W + x] = c;
       }
       frames.push(idx);
     }
     boilSeed = seed0;
-    const blob = encodeGif(W, W, frames, palette, Math.round(100 / BOIL_FPS));
-    await saveBlob(blob, `afterimage-doodle-${stamp()}.gif`);
-    btn.disabled = false; btn.textContent = '下載 GIF';
+    return encodeGif(W, W, frames, palette, Math.round(100 / BOIL_FPS));
+  }
+
+  // ---------- share: a short looping video (Instagram Stories, LINE…), GIF where video can't be made ----------
+  const shareBtn = document.getElementById('share');
+  let shareFile = null, recToken = 0;
+  function videoType() {
+    if (!window.MediaRecorder || !stage.captureStream) return '';
+    for (const t of ['video/mp4;codecs=avc1', 'video/mp4']) if (MediaRecorder.isTypeSupported(t)) return t;
+    return '';
+  }
+  async function prepareShare() {
+    const token = ++recToken; shareFile = null; shareBtn.disabled = true;
+    const type = videoType();
+    if (type) {
+      try {
+        const rec = new MediaRecorder(stage.captureStream(BOIL_FPS * 2), { mimeType: type, videoBitsPerSecond: 4e6 }), chunks = [];
+        rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+        const done = new Promise(r => rec.onstop = r);
+        rec.start(); await new Promise(r => setTimeout(r, 4000)); rec.stop(); await done;
+        if (token !== recToken) return;
+        const blob = new Blob(chunks, { type: 'video/mp4' });
+        if (blob.size > 1000) shareFile = new File([blob], `doodle-cam-${stamp()}.mp4`, { type: 'video/mp4' });
+      } catch (e) {}
+    }
+    if (!shareFile && token === recToken) shareFile = new File([gifBlob()], `doodle-cam-${stamp()}.gif`, { type: 'image/gif' });
+    if (token === recToken) shareBtn.disabled = false;
+  }
+  async function share() {
+    if (!shareFile) return;
+    if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
+      try { await navigator.share({ files: [shareFile] }); } catch (e) {}
+      return;
+    }
+    // no share sheet (most computers): save the file instead
+    const url = URL.createObjectURL(shareFile), a = document.createElement('a');
+    a.href = url; a.download = shareFile.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    msg.textContent = '這台裝置不支援分享，已改為下載';
   }
 
   // ---------- save ----------
@@ -619,6 +752,23 @@
 
   document.getElementById('retake').addEventListener('click', begin);
   document.getElementById('gif').addEventListener('click', makeGif);
+  shareBtn.addEventListener('click', share);
+
+  // ---------- place: city from the time zone right away, refined by location if allowed ----------
+  function detectPlace() {
+    try { place = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').split('/').pop().replace(/_/g, ' '); } catch (e) {}
+    try { const saved = localStorage.getItem('doodlecam-place'); if (saved) place = saved; } catch (e) {}
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(async pos => {
+      try {
+        const { latitude, longitude } = pos.coords;
+        const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
+        const j = await r.json(); const city = (j.city || j.locality || '').replace(/ City$/, '');
+        if (city) { place = city; try { localStorage.setItem('doodlecam-place', city); } catch (e) {} }
+      } catch (e) {}
+    }, () => {}, { timeout: 15000, maximumAge: 3600000 });
+  }
+  detectPlace();
 
   resize();
   requestAnimationFrame(frame);
