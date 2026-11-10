@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#070D0A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Doodle Cam">
+<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAACa0lEQVR4Xu3dwXHbMBBA0TiTUy65xI2lDdfjNtJYmshVF9HaWWCBJd4rQKRgev8YFK23n79/fQMIeTM5eOa7pQHCZAVZAQaSFWQFGKhlVv78+xi4BDX+vn/WHGggm2BAnKwUkRXgDLJSRFaAMyzLSmYjq+OI7vh+bYIBcbJSRFaAM8hKEVkBziArRTpmZeLFcb0cHXc5V7GSbMfkaGDV5HBvBYiTlQZkBehDVhqQFaCPVFZWjTsezfsp2AQD4mSlPVkBdiIr7ckKsJOWWZk3SDNWndW849oEA+JkZZh54/3avOPKChAnK8PMG++yAvQhK8PcLys/VvWMUa7/X8GqS5ab+yIre153zup1mbWyCQbEycowmQE+T+asZAWIk5VhMgN8nsxZyQoQ1zIrvE5WgFqycnOyAtSSlZuTFaCWrNycrAC1ZOXmZAWoJSs3JytALVm5uUxWvnjKfp7MSd+P1aCZZVnxu/Jo3mpkXtlzK0CcrGwhM/yvZV5ZVoA4WdlCZvjLCrCTZVmZNwz3NC8c81bSXytAnKwUkRXgDLJSRFaAM9zwa7z2dP19ShnzgmUTDIiTlSKyApxBVorICnAGWSnSMSvLnrLPmLfQwEtaZoVH7q0AO5GV9mQF2ImstCcrwE5SWbk2b9ydZtVK+oAxECcrDcgK0IesNCArQB8Ts5LZIrvW8TOk12nY8/3aBAPiZKWIrABnkJUisgKcQVaKdMzKsosjI7PQq3Tc1YWnTI4iHSeHeytAnKwUkRXgDLJSRFaAM7TMCjVsggFxssJTsgLEyQqyAgwkK8gKMJCsICvAQLKCrAADyQpP/QfxxpeKqVtDzQAAAABJRU5ErkJggg==">
+<link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAACa0lEQVR4Xu3dwXHbMBBA0TiTUy65xI2lDdfjNtJYmshVF9HaWWCBJd4rQKRgev8YFK23n79/fQMIeTM5eOa7pQHCZAVZAQaSFWQFGKhlVv78+xi4BDX+vn/WHGggm2BAnKwUkRXgDLJSRFaAMyzLSmYjq+OI7vh+bYIBcbJSRFaAM8hKEVkBziArRTpmZeLFcb0cHXc5V7GSbMfkaGDV5HBvBYiTlQZkBehDVhqQFaCPVFZWjTsezfsp2AQD4mSlPVkBdiIr7ckKsJOWWZk3SDNWndW849oEA+JkZZh54/3avOPKChAnK8PMG++yAvQhK8PcLys/VvWMUa7/X8GqS5ab+yIre153zup1mbWyCQbEycowmQE+T+asZAWIk5VhMgN8nsxZyQoQ1zIrvE5WgFqycnOyAtSSlZuTFaCWrNycrAC1ZOXmZAWoJSs3JytALVm5uUxWvnjKfp7MSd+P1aCZZVnxu/Jo3mpkXtlzK0CcrGwhM/yvZV5ZVoA4WdlCZvjLCrCTZVmZNwz3NC8c81bSXytAnKwUkRXgDLJSRFaAM9zwa7z2dP19ShnzgmUTDIiTlSKyApxBVorICnAGWSnSMSvLnrLPmLfQwEtaZoVH7q0AO5GV9mQF2ImstCcrwE5SWbk2b9ydZtVK+oAxECcrDcgK0IesNCArQB8Ts5LZIrvW8TOk12nY8/3aBAPiZKWIrABnkJUisgKcQVaKdMzKsosjI7PQq3Tc1YWnTI4iHSeHeytAnKwUkRXgDLJSRFaAM7TMCjVsggFxssJTsgLEyQqyAgwkK8gKMJCsICvAQLKCrAADyQpP/QfxxpeKqVtDzQAAAABJRU5ErkJggg==">
+<title>Doodle Cam</title>
+<style>
+  :root{ --bg:#070D0A; --ink:#5CFF7A; --dim:#2C7A42; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:none;background:var(--bg);overflow:hidden;
+    font-family:"Helvetica Neue",Helvetica,"PingFang TC","Noto Sans TC",system-ui,sans-serif;
+    color:var(--ink);-webkit-font-smoothing:antialiased;touch-action:manipulation}
+  canvas#stage{position:fixed;left:50%;top:50%;transform:translate(-50%,-52%);display:block;outline:1px solid rgba(92,255,122,.18);
+    image-rendering:pixelated}
+  video{position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+  .title{position:fixed;left:calc(22px + env(safe-area-inset-left));top:calc(20px + env(safe-area-inset-top));pointer-events:none;line-height:1.6}
+  .title b{display:block;font-weight:400;font-size:11px;letter-spacing:.32em}
+  .title span{display:block;font-weight:300;font-size:10px;letter-spacing:.14em;color:var(--dim)}
+  .bar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(30px + env(safe-area-inset-bottom));display:flex;gap:14px;
+    opacity:0;pointer-events:none;transition:opacity .4s}
+  .bar.on{opacity:1;pointer-events:auto}
+  .pill{all:unset;cursor:pointer;white-space:nowrap;text-align:center;min-width:64px;border:1px solid var(--ink);border-radius:999px;padding:12px 22px;font-size:11px;letter-spacing:.24em;
+    background:rgba(92,255,122,.04);transition:background .2s,transform .15s;-webkit-tap-highlight-color:transparent}
+  .pill:hover{background:rgba(92,255,122,.14)} .pill:active{transform:scale(.96)}
+  .pill.solid{background:var(--ink);color:var(--bg)}
+  .pill[disabled]{opacity:.45;pointer-events:none}
+  .msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom));font-size:10px;letter-spacing:.2em;
+    color:var(--dim);white-space:nowrap}
+  @media (pointer:coarse){ .pill{padding:15px 26px} }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<video id="cam" playsinline muted autoplay></video>
+<div class="title"><b>AFTERIMAGE</b><span>doodle snapshot — study 09</span></div>
+<div class="msg" id="msg"></div>
+<div class="bar" id="bar">
+  <button class="pill" id="retake">重拍</button>
+  <button class="pill solid" id="gif">下載 GIF</button>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/holistic.js" crossorigin="anonymous"></script>
+<script>
+(() => {
+  // ---------- settings ----------
+  const G = 96;              // pixel-game grid (cells across the square)
+  const HR = 480;            // line drawing resolution before snapping to the grid (5 px per cell)
+  const M = 64;              // analysis grid for the person mask and the background
+  const BOIL_FPS = 10;       // the finished doodle is redrawn this many times a second, each time a little different
+  const BG_LEVELS = 2;       // how many light/dark boundaries of the scene become lines
+  const MAX_BG_LINES = 12;   // keep only the longest background lines: a 5-year-old draws the big things
+  const COUNT_FROM = 3;      // seconds of countdown before the snapshot
+  const GIF_FRAMES = 10;     // frames in the downloaded GIF (one boil cycle each)
+  const GREEN = [92, 255, 122], BG = [10, 20, 15], FLASH = [226, 255, 232];
+
+  const stage = document.getElementById('stage');
+  const ctx = stage.getContext('2d');
+  const video = document.getElementById('cam');
+  const bar = document.getElementById('bar'), msg = document.getElementById('msg');
+  const work = document.createElement('canvas'); work.width = work.height = HR;
+  const wctx = work.getContext('2d', { willReadFrequently: true });
+  const cellsCv = document.createElement('canvas'); cellsCv.width = cellsCv.height = G;
+  const cctx = cellsCv.getContext('2d'); const cellImg = cctx.createImageData(G, G);
+  const camS = document.createElement('canvas'); camS.width = camS.height = M;
+  const camCtx = camS.getContext('2d', { willReadFrequently: true });
+  const viewS = document.createElement('canvas'); viewS.width = viewS.height = G;
+  const viewCtx = viewS.getContext('2d', { willReadFrequently: true });
+  const maskCv = document.createElement('canvas'); maskCv.width = maskCv.height = M;
+  const mctx = maskCv.getContext('2d', { willReadFrequently: true });
+  const still = document.createElement('canvas'); still.width = still.height = 384;     // the frozen moment, square
+  const stillCtx = still.getContext('2d', { willReadFrequently: true });
+  const scan = document.createElement('canvas');
+
+  let stream = null, facing = 'user', mode = 'idle', modeT = 0, lastBoil = 0, boilSeed = 1, label = '';
+  const person = new Float32Array(M * M), bgLum = new Float32Array(M * M).fill(-1);
+  let segReady = false, face = null, hands = [], strokesCache = [], hol = null, holReady = null, lastResult = null;
+
+  // ---------- layout: a centred square ----------
+  function resize() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const S = Math.floor(Math.min(window.innerWidth * 0.88, window.innerHeight * 0.70));
+    stage.style.width = stage.style.height = S + 'px';
+    stage.width = stage.height = Math.round(S * dpr);
+    scan.width = scan.height = stage.width;
+    const sc = scan.getContext('2d'); sc.fillStyle = 'rgba(0,0,0,0.28)';
+    const step = Math.max(2, Math.round(stage.width / G / 2.6));
+    for (let y = 0; y < scan.height; y += step) sc.fillRect(0, y, scan.width, Math.max(1, step / 3));
+    if (mode === 'result') { drawDoodle(); compose(); }
+  }
+  window.addEventListener('resize', resize);
+
+  function crop(w, h) { const s = Math.min(w, h); return [(w - s) / 2, (h - s) / 2, s]; }
+
+  // ---------- camera ----------
+  async function startCam() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    video.srcObject = stream; await video.play();
+  }
+  function stopCam() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
+
+  // ---------- the model runs once, on the frozen frame only ----------
+  const U = p => [facing === 'user' ? 1 - p.x : p.x, p.y];
+  function initModel() {
+    try {
+      if (!window.Holistic) return;
+      hol = new Holistic({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/${f}` });
+      hol.setOptions({ modelComplexity: 1, smoothLandmarks: false, enableSegmentation: true, smoothSegmentation: false,
+        refineFaceLandmarks: false, minDetectionConfidence: 0.4, minTrackingConfidence: 0.4 });
+      hol.onResults(res => { lastResult = res; });
+      holReady = hol.initialize ? hol.initialize().catch(() => {}) : Promise.resolve();   // download while you pose
+    } catch (e) { hol = null; }
+  }
+  initModel();
+  function applyResult(res) {
+    const m = res.segmentationMask;
+    segReady = false; person.fill(0);
+    if (m) {
+      mctx.save(); mctx.clearRect(0, 0, M, M);
+      if (facing === 'user') { mctx.translate(M, 0); mctx.scale(-1, 1); }
+      mctx.drawImage(m, 0, 0, m.width, m.height, 0, 0, M, M); mctx.restore();
+      const d = mctx.getImageData(0, 0, M, M).data;
+      for (let i = 0, p = 0; i < M * M; i++, p += 4) person[i] = Math.min(d[p + 3], Math.max(d[p], d[p + 1], d[p + 2])) / 255;
+      segReady = true;
+    }
+    face = res.faceLandmarks ? res.faceLandmarks.map(U) : null;
+    hands = [res.leftHandLandmarks, res.rightHandLandmarks].filter(Boolean).map(h => h.map(U));
+  }
+
+  // background brightness of the frozen frame
+  function sampleStill() {
+    camCtx.save(); if (facing === 'user') { camCtx.translate(M, 0); camCtx.scale(-1, 1); }
+    camCtx.drawImage(still, 0, 0, M, M); camCtx.restore();
+    const d = camCtx.getImageData(0, 0, M, M).data;
+    for (let i = 0, p = 0; i < M * M; i++, p += 4) bgLum[i] = d[p] * 0.299 + d[p + 1] * 0.587 + d[p + 2] * 0.114;
+  }
+
+  // ---------- contour tracing on a binary grid ----------
+  function traceOutlines(bin, minArea) {
+    const lab = new Int32Array(M * M), out = []; let id = 0;
+    const DX = [1, 1, 0, -1, -1, -1, 0, 1], DY = [0, 1, 1, 1, 0, -1, -1, -1];
+    const at = (x, y) => x >= 0 && y >= 0 && x < M && y < M && bin[y * M + x];
+    for (let s0 = 0; s0 < M * M; s0++) {
+      if (!bin[s0] || lab[s0]) continue;
+      id++; let area = 0; const st = [s0]; lab[s0] = id;
+      while (st.length) { const c = st.pop(); area++; const x = c % M, y = (c / M) | 0;
+        for (let k = 0; k < 8; k += 2) { const nx = x + DX[k], ny = y + DY[k], ni = ny * M + nx;
+          if (at(nx, ny) && !lab[ni]) { lab[ni] = id; st.push(ni); } } }
+      if (area < minArea) continue;
+      // Moore-neighbour boundary walk from the component's first (top-left) cell
+      const sx = s0 % M, sy = (s0 / M) | 0; let x = sx, y = sy, dir = 6; const pts = [[x, y]];
+      for (let guard = 0; guard < 4 * M * M; guard++) {
+        let found = false;
+        for (let k = 0; k < 8; k++) { const nd = (dir + 6 + k) % 8, nx = x + DX[nd], ny = y + DY[nd];
+          if (at(nx, ny) && lab[ny * M + nx] === id) { x = nx; y = ny; dir = nd; found = true; break; } }
+        if (!found || (x === sx && y === sy)) break;
+        pts.push([x, y]);
+      }
+      out.push({ pts, area });
+    }
+    return out;
+  }
+  // Ramer–Douglas–Peucker: fewer points = a simpler, more childlike shape
+  function simplify(p, eps) {
+    if (p.length < 3) return p;
+    let dmax = 0, idx = 0; const [a, b] = [p[0], p[p.length - 1]];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    for (let i = 1; i < p.length - 1; i++) {
+      const d = Math.abs((b[1] - a[1]) * p[i][0] - (b[0] - a[0]) * p[i][1] + b[0] * a[1] - b[1] * a[0]) / L;
+      if (d > dmax) { dmax = d; idx = i; }
+    }
+    if (dmax <= eps) return [a, b];
+    return simplify(p.slice(0, idx + 1), eps).slice(0, -1).concat(simplify(p.slice(idx), eps));
+  }
+  // closed outlines: split at the point farthest from the start, simplify both halves
+  function simplifyClosed(p, eps) {
+    let far = 0, fd = -1;
+    for (let i = 1; i < p.length; i++) { const d = Math.hypot(p[i][0] - p[0][0], p[i][1] - p[0][1]); if (d > fd) { fd = d; far = i; } }
+    if (far === 0) return p;
+    return simplify(p.slice(0, far + 1), eps).slice(0, -1).concat(simplify(p.slice(far).concat([p[0]]), eps));
+  }
+  const toU = p => [(p[0] + 0.5) / M, (p[1] + 0.5) / M];
+
+  // ---------- build the childlike drawing as a list of strokes (0..1 coords) ----------
+  function buildStrokes() {
+    const strokes = [];
+    // dilated person mask, used to stop background lines at the person
+    const near = new Uint8Array(M * M);
+    for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
+      let m = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const X = x + dx, Y = y + dy; if (X >= 0 && Y >= 0 && X < M && Y < M && person[Y * M + X] > 0.4) m = 1; }
+      near[y * M + x] = segReady ? m : 0;
+    }
+    // background: boundaries between a few brightness levels (mountains, horizon, clouds, door frames...)
+    if (bgLum[0] >= 0) {
+      const sm = new Float32Array(M * M);
+      for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) { let s = 0, c = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const X = x + dx, Y = y + dy; if (X >= 0 && Y >= 0 && X < M && Y < M) { s += bgLum[Y * M + X]; c++; } }
+        sm[y * M + x] = s / c; }
+      const vals = []; for (let i = 0; i < M * M; i++) if (!near[i]) vals.push(sm[i]);
+      vals.sort((a, b) => a - b);
+      const bgLines = [];
+      for (let k = 1; k <= BG_LEVELS && vals.length > 50; k++) {
+        const t = vals[Math.floor(vals.length * k / (BG_LEVELS + 1))];
+        const bin = new Uint8Array(M * M); for (let i = 0; i < M * M; i++) bin[i] = sm[i] > t ? 1 : 0;
+        for (const o of traceOutlines(bin, 25)) {
+          // split at the frame edge and at the person: open lines, like a hand-drawn horizon
+          let cur = [];
+          for (const p of o.pts) {
+            const edge = p[0] <= 0 || p[1] <= 0 || p[0] >= M - 1 || p[1] >= M - 1, blocked = near[p[1] * M + p[0]];
+            if (edge || blocked) { if (cur.length > 6) bgLines.push(cur); cur = []; } else cur.push(p);
+          }
+          if (cur.length > 6) bgLines.push(cur);
+        }
+      }
+      bgLines.sort((a, b) => b.length - a.length);
+      for (const l of bgLines.slice(0, MAX_BG_LINES)) strokes.push({ pts: simplify(l, 1.6).map(toU), w: 1.0 });
+    }
+    // regions where a detailed doodle replaces the silhouette outline: the face and each hand
+    const holes = [];
+    let faceStrokes = [], handStrokes = [];
+    if (face) {
+      // a small face is enlarged around its centre (kids draw big heads), so the features stay readable
+      const c0 = centroid(FACE_OVAL.map(i => face[i]));
+      const r0 = FACE_OVAL.reduce((s, i) => s + Math.hypot(face[i][0] - c0[0], face[i][1] - c0[1]), 0) / FACE_OVAL.length;
+      const k = Math.min(2.0, Math.max(1, 0.13 / r0));
+      const F = face.map(p => [c0[0] + (p[0] - c0[0]) * k, c0[1] + (p[1] - c0[1]) * k]);
+      const face_ = F, pick = idx => idx.map(i => F[i]);
+      const oval = pick(FACE_OVAL), c = c0, r = r0 * k;
+      holes.push([c, r * 1.12]);
+      // head: the real face outline, simplified to a lumpy childlike shape
+      faceStrokes.push({ pts: closeLoop(simplifyClosed(oval, r * 0.09)), w: 1.15 });
+      const fw = r * 2;
+      // eyes: size and openness come from the eyelids; closed eyes become a short line
+      for (const [up, low, corners] of EYES) {
+        const a = F[corners[0]], b = F[corners[1]], w = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        const open = Math.hypot(F[up][0] - F[low][0], F[up][1] - F[low][1]) / (w || 1);
+        const ec = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        if (open < 0.16) faceStrokes.push({ pts: [a, b], w: 0.75 });
+        else faceStrokes.push({ dot: ec, r: Math.max(fw * 0.035, w * (0.16 + open * 0.35)) });
+      }
+      // brows: five points each, reduced to a three-point line that follows the expression
+      for (const br of BROWS) faceStrokes.push({ pts: simplify(pick(br), r * 0.03).slice(0, 3).length >= 2 ? [F[br[0]], F[br[2]], F[br[4]]] : pick(br), w: 0.8 });
+      // nose: bridge -> tip -> the nostril on the side the face is turned to
+      const tip = F[4], bridge = F[6], side = (F[98][0] - tip[0]) ** 2 > (F[327][0] - tip[0]) ** 2 ? F[98] : F[327];
+      faceStrokes.push({ pts: [[(bridge[0] * 2 + tip[0]) / 3, (bridge[1] * 2 + tip[1]) / 3], tip, side], w: 0.8 });
+      // mouth: the real lip line; an open mouth becomes a simplified open shape
+      const mw = Math.hypot(F[61][0] - F[291][0], F[61][1] - F[291][1]);
+      const gap = Math.hypot(F[13][0] - F[14][0], F[13][1] - F[14][1]) / (mw || 1);
+      if (gap > 0.18) faceStrokes.push({ pts: closeLoop(simplifyClosed(pick(LIPS_INNER), mw * 0.08)), w: 0.95 });
+      else faceStrokes.push({ pts: simplify(pick(MOUTH_LINE), mw * 0.05), w: 0.95 });
+      // ears: a little bump just outside each side of the face
+      for (const [ei, dir] of [[234, -1], [454, 1]]) {
+        const e = F[ei], out = [e[0] - c[0], e[1] - c[1]], L = Math.hypot(out[0], out[1]) || 1;
+        const ex = e[0] + out[0] / L * r * 0.12, ey = e[1] + out[1] / L * r * 0.12;
+        const a0 = Math.atan2(out[1], out[0]) * 180 / Math.PI;
+        faceStrokes.push({ pts: arc(ex, ey, r * 0.16, a0 - 80, a0 + 80, 8), w: 0.8 });
+      }
+    }
+    for (const h0 of hands) {
+      const xs = h0.map(p => p[0]), ys = h0.map(p => p[1]);
+      const hc = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+      const hr0 = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 0.62;
+      const kh = Math.min(1.8, Math.max(1, 0.08 / hr0)), hr = hr0 * kh;                 // small hands are enlarged too
+      const h = h0.map(p => [hc[0] + (p[0] - hc[0]) * kh, hc[1] + (p[1] - hc[1]) * kh]);
+      holes.push([hc, hr]);
+      // palm: wrist and finger bases, simplified
+      const palm = [0, 1, 5, 9, 13, 17].map(i => h[i]);
+      handStrokes.push({ pts: closeLoop(simplifyClosed(palm, hr * 0.08)), w: 1.0 });
+      // fingers: only the straight ones are drawn, as stick lines (so a V sign shows two fingers)
+      const wr = h[0], dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+      for (const [mcp, pip, tipI] of FINGERS) {
+        if (dist(h[tipI], wr) > dist(h[pip], wr) * 1.12) handStrokes.push({ pts: [h[mcp], h[pip], h[tipI]], w: 0.85 });
+      }
+    }
+    // person: one wobbly outline of the silhouette, with the face and hands cut out for their own doodles
+    if (segReady) {
+      const bin = new Uint8Array(M * M); for (let i = 0; i < M * M; i++) bin[i] = person[i] > 0.5 ? 1 : 0;
+      const outs = traceOutlines(bin, 40).sort((a, b) => b.area - a.area).slice(0, 1);
+      for (const o of outs) {
+        const pts = simplifyClosed(o.pts, 1.1).map(toU); let cur = [];
+        for (const p of resample(closeLoop(pts), 0.012)) {
+          if (holes.some(([c, r]) => Math.hypot(p[0] - c[0], p[1] - c[1]) < r)) { if (cur.length > 2) strokes.push({ pts: cur, w: 1.15 }); cur = []; }
+          else cur.push(p);
+        }
+        if (cur.length > 2) strokes.push({ pts: cur, w: 1.15 });
+      }
+    }
+    strokes.push(...faceStrokes, ...handStrokes);
+    return strokes;
+  }
+  // MediaPipe face-mesh indices
+  const FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+  const EYES = [[159, 145, [33, 133]], [386, 374, [362, 263]]];             // [upper lid, lower lid, corners]
+  const BROWS = [[70, 63, 105, 66, 107], [336, 296, 334, 293, 300]];
+  const MOUTH_LINE = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308];
+  const LIPS_INNER = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
+  const FINGERS = [[2, 3, 4], [5, 6, 8], [9, 10, 12], [13, 14, 16], [17, 18, 20]];   // [base, middle joint, tip]
+  const centroid = p => [p.reduce((s, q) => s + q[0], 0) / p.length, p.reduce((s, q) => s + q[1], 0) / p.length];
+  const closeLoop = p => p.length ? p.concat([p[0]]) : p;
+  function arc(cx, cy, r, a0, a1, n) { const p = []; for (let i = 0; i <= n; i++) { const a = (a0 + (a1 - a0) * i / n) * Math.PI / 180; p.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } return p; }
+  function resample(p, step) {
+    const out = [p[0]];
+    for (let i = 1; i < p.length; i++) { const a = p[i - 1], b = p[i], d = Math.hypot(b[0] - a[0], b[1] - a[1]), k = Math.max(1, Math.round(d / step));
+      for (let t = 1; t <= k; t++) out.push([a[0] + (b[0] - a[0]) * t / k, a[1] + (b[1] - a[1]) * t / k]); }
+    return out;
+  }
+
+  // ---------- draw strokes with a shaky hand, then snap to the pixel grid ----------
+  let seedState = 1;
+  const rnd = () => (seedState = (seedState * 16807) % 2147483647) / 2147483647;
+  function drawDoodle() {
+    seedState = boilSeed % 2147483646 + 1;
+    const strokes = strokesCache, cell = HR / G;
+    wctx.clearRect(0, 0, HR, HR); wctx.strokeStyle = wctx.fillStyle = '#fff'; wctx.lineJoin = wctx.lineCap = 'round';
+    for (const s of strokes) {
+      if (s.dot) { wctx.beginPath(); wctx.arc((s.dot[0] + (rnd() - .5) * .006) * HR, (s.dot[1] + (rnd() - .5) * .006) * HR, Math.max(cell * 0.9, s.r * HR), 0, 6.283); wctx.fill(); continue; }
+      const pts = resample(s.pts, 0.014); if (pts.length < 2) continue;
+      const amp = (0.0035 + rnd() * 0.004), f1 = 0.45 + rnd() * 0.3, f2 = 0.4 + rnd() * 0.3, p1 = rnd() * 6.28, p2 = rnd() * 6.28;
+      const wob = pts.map((p, i) => [p[0] + amp * Math.sin(i * f1 + p1) + (rnd() - .5) * 0.002, p[1] + amp * Math.cos(i * f2 + p2) + (rnd() - .5) * 0.002]);
+      const open = Math.hypot(wob[0][0] - wob[wob.length - 1][0], wob[0][1] - wob[wob.length - 1][1]) > 0.01;
+      if (open && wob.length > 2) { const [a, b] = wob; wob.unshift([a[0] - (b[0] - a[0]) * 0.8, a[1] - (b[1] - a[1]) * 0.8]); }   // overshoot
+      wctx.lineWidth = cell * s.w * (1.0 + rnd() * 0.35);
+      wctx.beginPath(); wctx.moveTo(wob[0][0] * HR, wob[0][1] * HR);
+      for (let i = 1; i < wob.length; i++) wctx.lineTo(wob[i][0] * HR, wob[i][1] * HR);
+      wctx.stroke();
+    }
+    // snap: a cell lights up if enough of its area is inked
+    const d = wctx.getImageData(0, 0, HR, HR).data, D = cellImg.data, c = HR / G;
+    for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
+      let ink = 0;
+      for (let y = gy * c; y < (gy + 1) * c; y++) for (let x = gx * c; x < (gx + 1) * c; x++) if (d[(y * HR + x) * 4 + 3] > 128) ink++;
+      const on = ink >= c * c * 0.28, p = (gy * G + gx) * 4, col = on ? GREEN : BG;
+      D[p] = col[0]; D[p + 1] = col[1]; D[p + 2] = col[2]; D[p + 3] = 255;
+    }
+    cctx.putImageData(cellImg, 0, 0);
+  }
+
+  // ---------- live viewfinder: the camera as 4 shades of green pixels ----------
+  const SHADES = [BG, [22, 70, 38], [44, 150, 74], GREEN];
+  function viewfinder(dim) {
+    const vw = video.videoWidth, vh = video.videoHeight; if (!vw) return false;
+    const [sx, sy, s] = crop(vw, vh);
+    viewCtx.save(); if (facing === 'user') { viewCtx.translate(G, 0); viewCtx.scale(-1, 1); }
+    viewCtx.drawImage(video, sx, sy, s, s, 0, 0, G, G); viewCtx.restore();
+    const d = viewCtx.getImageData(0, 0, G, G).data, D = cellImg.data;
+    let lo = 255, hi = 0;
+    for (let p = 0; p < d.length; p += 4) { const l = d[p] * .299 + d[p + 1] * .587 + d[p + 2] * .114; if (l < lo) lo = l; if (l > hi) hi = l; }
+    for (let p = 0; p < d.length; p += 4) {
+      const l = (d[p] * .299 + d[p + 1] * .587 + d[p + 2] * .114 - lo) / ((hi - lo) || 1);
+      const c = SHADES[Math.min(3, (l * 4) | 0)];
+      D[p] = c[0] * dim; D[p + 1] = c[1] * dim; D[p + 2] = c[2] * dim; D[p + 3] = 255;
+    }
+    return true;
+  }
+
+  // ---------- big pixel digits for the countdown ----------
+  const DIGITS = {
+    3: ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+    2: ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+    1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+  };
+  function stampDigit(n, k) {
+    const rows = DIGITS[n]; if (!rows) return;
+    const u = Math.round(6 * k), w = 5 * u, h = 7 * u, x0 = ((G - w) / 2) | 0, y0 = ((G - h) / 2) | 0, D = cellImg.data;
+    const on = (x, y) => { const fx = Math.floor((x - x0) / u), fy = Math.floor((y - y0) / u); return fx >= 0 && fy >= 0 && fx < 5 && fy < 7 && rows[fy][fx] === '1'; };
+    for (let y = y0 - 1; y <= y0 + h; y++) for (let x = x0 - 1; x <= x0 + w; x++) {
+      if (x < 0 || y < 0 || x >= G || y >= G) continue;
+      const p = (y * G + x) * 4;
+      if (on(x, y)) { D[p] = GREEN[0]; D[p + 1] = GREEN[1]; D[p + 2] = GREEN[2]; }
+      else if (on(x - 1, y) || on(x + 1, y) || on(x, y - 1) || on(x, y + 1)) { D[p] = BG[0]; D[p + 1] = BG[1]; D[p + 2] = BG[2]; }   // dark rim
+    }
+  }
+  // per-cell random numbers for the pixel flash dissolve
+  const cellRnd = new Float32Array(G * G).map((_, i) => { let h = Math.imul(i + 7, 2654435761) >>> 0; h = (h ^ (h >>> 15)) >>> 0; return (Math.imul(h, 2246822519) >>> 0) / 4294967296; });
+
+  // ---------- flow: countdown -> flash + snapshot -> doodle ----------
+  async function begin() {
+    bar.classList.remove('on'); msg.textContent = '';
+    try { await startCam(); } catch (e) { mode = 'error'; msg.textContent = '請允許瀏覽器使用鏡頭'; document.getElementById('retake').textContent = '開啟鏡頭'; document.getElementById('gif').disabled = true; bar.classList.add('on'); return; }
+    document.getElementById('retake').textContent = '重拍';
+    // wait for the model first: loading it can freeze the page for a moment, and the countdown must stay smooth
+    mode = 'loading'; msg.textContent = '準備中…';
+    if (holReady) await Promise.race([holReady, new Promise(r => setTimeout(r, 10000))]);
+    msg.textContent = ''; mode = 'countdown'; modeT = performance.now();
+  }
+  function snapshot() {
+    const [sx, sy, s] = crop(video.videoWidth, video.videoHeight);
+    stillCtx.drawImage(video, sx, sy, s, s, 0, 0, still.width, still.height);
+    stopCam();                                                           // camera off: nothing runs while you look at the doodle
+    const t = new Date(), z = n => String(n).padStart(2, '0');
+    label = `AFTERIMAGE · ${t.getFullYear()}.${z(t.getMonth() + 1)}.${z(t.getDate())}`;
+    mode = 'flash'; modeT = performance.now();
+    process();
+  }
+  async function process() {
+    sampleStill(); face = null; hands = []; segReady = false;
+    if (hol) {
+      try {
+        await holReady;
+        for (let k = 0; k < 3; k++) { lastResult = null; await hol.send({ image: still }); if (lastResult) applyResult(lastResult); }   // a few passes on the same frame find both hands more reliably
+      } catch (e) { msg.textContent = '人物偵測失敗，只畫出背景'; }
+    } else msg.textContent = '模型沒有載入（請確認網路），只畫出背景';
+    strokesCache = buildStrokes();
+    const wait = Math.max(0, 520 - (performance.now() - modeT));             // let the flash finish
+    setTimeout(() => { mode = 'result'; lastBoil = 0; bar.classList.add('on'); document.getElementById('gif').disabled = false; }, wait);
+  }
+
+  // ---------- render ----------
+  function compose() {
+    const W = stage.width;
+    ctx.fillStyle = `rgb(${BG.join(',')})`; ctx.fillRect(0, 0, W, W);
+    ctx.imageSmoothingEnabled = true; ctx.globalAlpha = 0.5;
+    const g = W / G * 0.9; ctx.drawImage(cellsCv, -g, -g, W + 2 * g, W + 2 * g); ctx.drawImage(cellsCv, g, g, W - 2 * g, W - 2 * g);
+    ctx.globalAlpha = 1; ctx.imageSmoothingEnabled = false; ctx.globalCompositeOperation = 'lighten';
+    ctx.drawImage(cellsCv, 0, 0, W, W); ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(scan, 0, 0);
+    if (mode === 'result' && label) {
+      const dpr = W / parseFloat(stage.style.width);
+      ctx.font = `300 ${9 * dpr}px "Helvetica Neue", Helvetica, sans-serif`; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+      if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${1.5 * dpr}px`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = `rgb(${BG.join(',')})`; ctx.fillRect(W - 20 * dpr - tw, W - 25 * dpr, tw + 14 * dpr, 19 * dpr);
+      ctx.fillStyle = `rgb(${GREEN.join(',')})`; ctx.fillText(label, W - 12 * dpr, W - 10 * dpr);
+    }
+  }
+  let dots = 0;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (mode === 'loading') {
+      if (viewfinder(0.55)) { cctx.putImageData(cellImg, 0, 0); compose(); }
+    } else if (mode === 'countdown') {
+      const t = (now - modeT) / 1000, n = COUNT_FROM - Math.floor(t);
+      if (n <= 0) { snapshot(); return; }
+      if (!viewfinder(0.55)) return;
+      stampDigit(n, 1 + 0.12 * (1 - (t % 1)));                            // each number lands slightly big, then settles
+      cctx.putImageData(cellImg, 0, 0); compose();
+    } else if (mode === 'flash' || (mode === 'processing')) {
+      const t = Math.min(1, (now - modeT) / 500), D = cellImg.data;
+      for (let i = 0, p = 0; i < G * G; i++, p += 4) {
+        const c = t < 0.12 ? FLASH : cellRnd[i] > (t - 0.12) / 0.88 ? GREEN : BG;   // white burst, then pixels drop out
+        D[p] = c[0]; D[p + 1] = c[1]; D[p + 2] = c[2]; D[p + 3] = 255;
+      }
+      cctx.putImageData(cellImg, 0, 0); compose();
+      if (t >= 1) { mode = 'processing'; if (((now / 300) | 0) !== dots) { dots = (now / 300) | 0; msg.textContent = '繪製中' + '.'.repeat(dots % 4); } }
+    } else if (mode === 'result') {
+      if (now - lastBoil < 1000 / BOIL_FPS) return;                          // only redraw for the next wobble
+      lastBoil = now; boilSeed++; if (msg.textContent.startsWith('繪製中')) msg.textContent = '';
+      drawDoodle(); compose();
+    }
+  }
+
+  // ---------- GIF: a tiny encoder, 8 colours, LZW ----------
+  function lzw(indices, minCode) {
+    const out = []; let cur = 0, bits = 0;
+    const clear = 1 << minCode, eoi = clear + 1;
+    let size = minCode + 1, next = eoi + 1, dict = new Map();
+    const emit = c => { cur |= c << bits; bits += size; while (bits >= 8) { out.push(cur & 255); cur >>>= 8; bits -= 8; } };
+    emit(clear);
+    let prefix = indices[0];
+    for (let i = 1; i < indices.length; i++) {
+      const k = indices[i], key = prefix * 256 + k, hit = dict.get(key);
+      if (hit !== undefined) { prefix = hit; continue; }
+      emit(prefix);
+      if (next < 4096) { dict.set(key, next++); if (next > (1 << size) && size < 12) size++; }
+      else { emit(clear); dict = new Map(); size = minCode + 1; next = eoi + 1; }
+      prefix = k;
+    }
+    emit(prefix); emit(eoi);
+    if (bits > 0) out.push(cur & 255);
+    return out;
+  }
+  function encodeGif(w, h, frames, palette, delayCs) {
+    const b = [], u16 = v => b.push(v & 255, (v >> 8) & 255), str = s => { for (const ch of s) b.push(ch.charCodeAt(0)); };
+    str('GIF89a'); u16(w); u16(h); b.push(0xF2, 0, 0);                    // global colour table, 8 entries
+    for (const c of palette) b.push(c[0], c[1], c[2]);
+    b.push(0x21, 0xFF, 0x0B); str('NETSCAPE2.0'); b.push(3, 1, 0, 0, 0);    // loop forever
+    for (const f of frames) {
+      b.push(0x21, 0xF9, 4, 0); u16(delayCs); b.push(0, 0);
+      b.push(0x2C); u16(0); u16(0); u16(w); u16(h); b.push(0);
+      b.push(3); const data = lzw(f, 3);
+      for (let i = 0; i < data.length; i += 255) { const n = Math.min(255, data.length - i); b.push(n); for (let j = 0; j < n; j++) b.push(data[i + j]); }
+      b.push(0);
+    }
+    b.push(0x3B);
+    return new Blob([new Uint8Array(b)], { type: 'image/gif' });
+  }
+  async function makeGif() {
+    const btn = document.getElementById('gif'); btn.disabled = true; btn.textContent = '產生中…';
+    await new Promise(r => setTimeout(r, 30));
+    const C = 5, W = G * C, dark = c => c.map(v => Math.round(v * 0.72)), GLOW = [30, 86, 48];
+    const palette = [BG, dark(BG), GLOW, dark(GLOW), GREEN, dark(GREEN), [0, 0, 0], [255, 255, 255]];
+    // the caption, rasterised once
+    const lc = document.createElement('canvas'); lc.width = lc.height = W; const lx = lc.getContext('2d');
+    lx.font = '600 11px "Helvetica Neue", Helvetica, sans-serif'; lx.textAlign = 'right'; lx.textBaseline = 'bottom';
+    if (lx.letterSpacing !== undefined) lx.letterSpacing = '1.5px';
+    const tw = lx.measureText(label).width; lx.fillStyle = '#f00'; lx.fillRect(W - 20 - tw, W - 24, tw + 14, 19); lx.fillStyle = '#0f0'; lx.fillText(label, W - 12, W - 9);
+    const ld = lx.getImageData(0, 0, W, W).data;
+    const frames = [], seed0 = boilSeed;
+    for (let f = 0; f < GIF_FRAMES; f++) {
+      boilSeed = seed0 + f; drawDoodle();
+      const D = cellImg.data, on = new Uint8Array(G * G);
+      for (let i = 0; i < G * G; i++) on[i] = D[i * 4 + 1] > 200 ? 1 : 0;
+      const idx = new Uint8Array(W * W);
+      for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+        const gx = (x / C) | 0, gy = (y / C) | 0, i = gy * G + gx; let c;
+        if (on[i]) c = 4;
+        else { let nb = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const X = gx + dx, Y = gy + dy; if (X >= 0 && Y >= 0 && X < G && Y < G && on[Y * G + X]) nb = 1; } c = nb ? 2 : 0; }
+        const q = (y * W + x) * 4;
+        if (ld[q + 3] > 60) c = ld[q + 1] > ld[q] ? 4 : 0;                // caption plate + text
+        if (y % 3 === 1) c += 1;                                            // scanline
+        idx[y * W + x] = c;
+      }
+      frames.push(idx);
+    }
+    boilSeed = seed0;
+    const blob = encodeGif(W, W, frames, palette, Math.round(100 / BOIL_FPS));
+    await saveBlob(blob, `afterimage-doodle-${stamp()}.gif`);
+    btn.disabled = false; btn.textContent = '下載 GIF';
+  }
+
+  // ---------- save ----------
+  const stamp = () => { const t = new Date(), z = n => String(n).padStart(2, '0');
+    return `${t.getFullYear()}${z(t.getMonth() + 1)}${z(t.getDate())}-${z(t.getHours())}${z(t.getMinutes())}${z(t.getSeconds())}`; };
+  async function saveBlob(blob, name) {
+    const file = new File([blob], name, { type: blob.type });
+    if (matchMedia('(pointer:coarse)').matches && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; }
+    }
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  document.getElementById('retake').addEventListener('click', begin);
+  document.getElementById('gif').addEventListener('click', makeGif);
+
+  resize();
+  requestAnimationFrame(frame);
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { msg.textContent = '請用 Chrome 或 Safari 開啟（手機需 https 網址）'; }
+  else begin();
+})();
+</script>
+</body>
+</html>
